@@ -81,6 +81,9 @@ create_directories() {
     sudo mkdir -p "$INSTALL_DIR/scripts"
 }
 
+# Declare the associative array globally
+declare -A selected_scripts
+
 # Script selection interface with additional debugging
 select_scripts() {
     local scripts_dir="$TEMP_DIR/repo/scripts"
@@ -89,7 +92,6 @@ select_scripts() {
         return
     fi
 
-    declare -A selected_scripts
     local all_scripts=()
 
     # Collect all available scripts
