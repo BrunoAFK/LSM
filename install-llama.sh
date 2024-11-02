@@ -1,8 +1,18 @@
 #!/bin/bash
-# Llama Script Manager Installer
-# This script handles the first-time installation of LSM from GitHub
+#==============================================================================
+# Llama Script Manager (LSM) Installer
+# 
+# This script automates the installation of LSM from GitHub, providing:
+# - Interactive script selection via dialog interface
+# - Automatic dependency handling
+# - Comprehensive error handling and debugging
+# - Clean installation with proper permissions
+#==============================================================================
 
-# Color codes for output
+#------------------------------------------------------------------------------
+# Configuration and Setup
+#------------------------------------------------------------------------------
+# Color codes for consistent output formatting
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -10,12 +20,21 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.44"
+VERSION="1.0.46"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
 
-# Error handling
+# Debug flag
+DEBUG=true # Set to true to enable debug output
+
+#------------------------------------------------------------------------------
+# Core Error Handling Functions
+#------------------------------------------------------------------------------
+# handle_error: Manages script failures and provides debug information
+# Parameters:
+#   $1 - Exit code from failed command
+#   $2 - Line number where error occurred
 # Add this function near the top of the script
 handle_error() {
     local exit_code=$1
@@ -72,9 +91,12 @@ INSTALL_DIR="/usr/local/lib/llama"
 BIN_DIR="/usr/local/bin"
 REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
 
-# Debug flag
-DEBUG=true # Set to true to enable debug output
-
+#------------------------------------------------------------------------------
+# Utility Functions
+#------------------------------------------------------------------------------
+# debug_log: Handles debug output when DEBUG=true
+# Parameters:
+#   $1 - Debug message to log
 # Add this helper function after the color definitions
 debug_log() {
     if [ "$DEBUG" = true ]; then
@@ -83,7 +105,13 @@ debug_log() {
     fi
 }
 
-# Check required tools
+#------------------------------------------------------------------------------
+# Installation Prerequisites
+#------------------------------------------------------------------------------
+# check_requirements: Verifies all required system tools are available
+# Checks for: git, curl
+# Provides installation instructions if missing
+# Add this function after the color definitions
 check_requirements() {
     if ! command -v git &>/dev/null; then
         echo -e "${RED}Error: git is not installed${NC}"
@@ -102,9 +130,11 @@ check_requirements() {
     fi
 }
 
-# Check repository availability
+# check_repository: Validates GitHub repository accessibility
+# Ensures the LSM repository exists and is publicly accessible
+# Add this function after the color definitions
 check_repository() {
-    echo -e "${YELLOW}Checking repository availability... Installer v${VERSION}${NC}"
+    echo -e "${YELLOW}Checking repository availability...${NC}"
 
     if ! curl --output /dev/null --silent --head --fail "https://github.com/$GITHUB_USER/$GITHUB_REPO"; then
         echo -e "${RED}Error: Repository $REPO_URL is not accessible${NC}"
@@ -116,9 +146,14 @@ check_repository() {
     fi
 }
 
-# Setup temporary directory and files
+#------------------------------------------------------------------------------
+# Installation Setup Functions
+#------------------------------------------------------------------------------
+# setup_temp_dir: Creates temporary working directory and files
+# Sets up cleanup handlers for proper resource management
+# Add this function after the color definitions
 setup_temp_dir() {
-    echo -e "${YELLOW}Setting up temporary directory... (Installer v${VERSION})${NC}"
+    echo -e "${YELLOW}Setting up temporary directory...${NC}"
     TEMP_DIR=$(mktemp -d)
     TEMP_FILE=$(mktemp)
     DESC_FILE=$(mktemp)
@@ -127,18 +162,22 @@ setup_temp_dir() {
     trap 'cleanup_temp_files' EXIT INT TERM
 }
 
-# Clone repository
+# clone_repository: Retrieves latest LSM code from GitHub
+# Clones repository to temporary directory for installation
+# Add this function after the color definitions
 clone_repository() {
-    echo -e "${YELLOW}Cloning repository... (Installer v${VERSION})${NC}"
+    echo -e "${YELLOW}Cloning repository...${NC}"
     if ! git clone "$REPO_URL" "$TEMP_DIR/repo" 2>/dev/null; then
         echo -e "${RED}Error: Failed to clone repository${NC}"
         exit 1
     fi
 }
 
-# Create directories
+# create_directories: Sets up LSM installation directory structure
+# Creates required directories with appropriate permissions
+# Add this function after the color definitions
 create_directories() {
-    echo -e "${YELLOW}Creating installation directories... (Installer v${VERSION})${NC}"
+    echo -e "${YELLOW}Creating installation directories...${NC}"
     sudo mkdir -p "$INSTALL_DIR"
     sudo mkdir -p "$INSTALL_DIR/scripts"
 }
@@ -147,7 +186,16 @@ create_directories() {
 declare -A selected_scripts
 declare -A script_descriptions
 
-# Script selection interface using dialog
+#------------------------------------------------------------------------------
+# Script Selection Interface
+#------------------------------------------------------------------------------
+# select_scripts: Provides interactive script selection via dialog
+# Features:
+# - Automatic dialog installation if needed
+# - Script description parsing
+# - "Install All" option
+# - Individual script selection
+# Add this function after the color definitions
 select_scripts() {
     local scripts_dir="$TEMP_DIR/repo/scripts"
     debug_log "Starting select_scripts function"
@@ -338,7 +386,14 @@ select_scripts() {
     fi
 }
 
-# Copy files with enhanced debugging
+#------------------------------------------------------------------------------
+# Installation Functions
+#------------------------------------------------------------------------------
+# copy_files: Handles the actual installation of selected scripts
+# - Copies main LSM script
+# - Installs selected utility scripts
+# - Sets appropriate permissions
+# Add this function after the color definitions
 copy_files() {
     debug_log "Beginning copy_files function"
     debug_log "Number of selected scripts: ${#SELECTED_SCRIPTS[@]}"
@@ -380,13 +435,17 @@ copy_files() {
     fi
 }
 
-# Create symlink
+# create_symlink: Creates system-wide command access
+# Links LSM into standard PATH for easy access
+# Add this function after the color definitions
 create_symlink() {
-    echo -e "${YELLOW}Creating symlink... (Installer v${VERSION})${NC}"
+    echo -e "${YELLOW}Creating symlink...${NC}"
     sudo ln -sf "$INSTALL_DIR/llama" "$BIN_DIR/llama"
 }
 
-# Add this new function before the main() function
+# cleanup_dialog: Removes dialog package if it was auto-installed
+# Cleanup happens after script selection is complete
+# Add this function after the color definitions
 cleanup_dialog() {
     echo -e "${YELLOW}Cleaning up dialog installation...${NC}"
     if command -v dialog >/dev/null 2>&1; then
@@ -403,10 +462,15 @@ cleanup_dialog() {
     fi
 }
 
-# Main installation process
+#------------------------------------------------------------------------------
+# Main Installation Process
+#------------------------------------------------------------------------------
+# main: Orchestrates the entire installation process
+# Executes all installation steps in sequence with error handling
+# Add this function after the color definitions
 main() {
     debug_log "Starting main installation process"
-    echo -e "${GREEN}Starting Llama Script Manager Installation v${VERSION}...${NC}"
+    echo -e "${GREEN}Starting Llama Script Manager Installation...${NC}"
 
     debug_log "Checking requirements"
     check_requirements
@@ -436,12 +500,13 @@ main() {
     debug_log "Cleaning up dialog"
     cleanup_dialog
 
-
-    echo -e "${GREEN}Installation v${VERSION} completed successfully!${NC}"
+    echo -e "${GREEN}Installation completed successfully!${NC}"
     echo -e "Run ${YELLOW}llama help${NC} to get started."
     debug_log "Installation completed"
+    echo
     llama status
-    echo -e "${GREEN}Installation v${VERSION} completed successfully!${NC}"
+    echo
+    echo -e "${GREEN}Installation completed successfully!${NC}"
     echo -e "Run ${YELLOW}llama help${NC} to get started."
     
     # Disable error handling before exiting
