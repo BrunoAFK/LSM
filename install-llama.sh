@@ -20,7 +20,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.46"
+VERSION="1.0.47"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -105,6 +105,17 @@ debug_log() {
     fi
 }
 
+# Add this helper function after the debug_log function
+print_section_header() {
+    local title=$1
+    if [ "$DEBUG" = true ]; then
+        echo -e "${BLUE}=== $title (v${VERSION}) ===${NC}"
+        debug_log "Starting section: $title"
+    else
+        echo -e "${BLUE}=== $title ===${NC}"
+    fi
+}
+
 #------------------------------------------------------------------------------
 # Installation Prerequisites
 #------------------------------------------------------------------------------
@@ -113,6 +124,7 @@ debug_log() {
 # Provides installation instructions if missing
 # Add this function after the color definitions
 check_requirements() {
+    print_section_header "Checking Requirements"
     if ! command -v git &>/dev/null; then
         echo -e "${RED}Error: git is not installed${NC}"
         echo "Please install git first:"
@@ -134,8 +146,7 @@ check_requirements() {
 # Ensures the LSM repository exists and is publicly accessible
 # Add this function after the color definitions
 check_repository() {
-    echo -e "${YELLOW}Checking repository availability...${NC}"
-
+    print_section_header "Checking Repository"
     if ! curl --output /dev/null --silent --head --fail "https://github.com/$GITHUB_USER/$GITHUB_REPO"; then
         echo -e "${RED}Error: Repository $REPO_URL is not accessible${NC}"
         echo "Please check:"
@@ -153,7 +164,7 @@ check_repository() {
 # Sets up cleanup handlers for proper resource management
 # Add this function after the color definitions
 setup_temp_dir() {
-    echo -e "${YELLOW}Setting up temporary directory...${NC}"
+    print_section_header "Setting up Temporary Directory"
     TEMP_DIR=$(mktemp -d)
     TEMP_FILE=$(mktemp)
     DESC_FILE=$(mktemp)
@@ -166,7 +177,7 @@ setup_temp_dir() {
 # Clones repository to temporary directory for installation
 # Add this function after the color definitions
 clone_repository() {
-    echo -e "${YELLOW}Cloning repository...${NC}"
+    print_section_header "Cloning Repository"
     if ! git clone "$REPO_URL" "$TEMP_DIR/repo" 2>/dev/null; then
         echo -e "${RED}Error: Failed to clone repository${NC}"
         exit 1
@@ -177,7 +188,7 @@ clone_repository() {
 # Creates required directories with appropriate permissions
 # Add this function after the color definitions
 create_directories() {
-    echo -e "${YELLOW}Creating installation directories...${NC}"
+    print_section_header "Creating Installation Directories"
     sudo mkdir -p "$INSTALL_DIR"
     sudo mkdir -p "$INSTALL_DIR/scripts"
 }
@@ -197,6 +208,7 @@ declare -A script_descriptions
 # - Individual script selection
 # Add this function after the color definitions
 select_scripts() {
+    print_section_header "Script Selection"
     local scripts_dir="$TEMP_DIR/repo/scripts"
     debug_log "Starting select_scripts function"
     debug_log "Scripts directory: $scripts_dir"
@@ -395,7 +407,7 @@ select_scripts() {
 # - Sets appropriate permissions
 # Add this function after the color definitions
 copy_files() {
-    debug_log "Beginning copy_files function"
+    print_section_header "Copying Files"
     debug_log "Number of selected scripts: ${#SELECTED_SCRIPTS[@]}"
 
     # Add verification of selected scripts
@@ -439,7 +451,7 @@ copy_files() {
 # Links LSM into standard PATH for easy access
 # Add this function after the color definitions
 create_symlink() {
-    echo -e "${YELLOW}Creating symlink...${NC}"
+    print_section_header "Creating Symlink"
     sudo ln -sf "$INSTALL_DIR/llama" "$BIN_DIR/llama"
 }
 
@@ -447,7 +459,7 @@ create_symlink() {
 # Cleanup happens after script selection is complete
 # Add this function after the color definitions
 cleanup_dialog() {
-    echo -e "${YELLOW}Cleaning up dialog installation...${NC}"
+    print_section_header "Cleaning Up Dialog"
     if command -v dialog >/dev/null 2>&1; then
         if command -v apt-get >/dev/null 2>&1; then
             sudo apt-get remove -y dialog
