@@ -20,7 +20,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.48"
+VERSION="1.0.50"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -111,8 +111,6 @@ print_section_header() {
     if [ "$DEBUG" = true ]; then
         echo -e "${BLUE}=== $title (v${VERSION}) ===${NC}"
         debug_log "Starting section: $title"
-    else
-        echo -e "${BLUE}=== $title ===${NC}"
     fi
 }
 
