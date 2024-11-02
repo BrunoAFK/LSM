@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.26"
+VERSION="1.0.27"
 
 # Error handling
 # Add this function near the top of the script
