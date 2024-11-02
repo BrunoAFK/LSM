@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.22"
+VERSION="1.0.23"
 
 # Error handling
 set -e # Exit on error
@@ -26,7 +26,7 @@ BIN_DIR="/usr/local/bin"
 REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
 
 # Debug flag
-DEBUG=true  # Set to true to enable debug output
+DEBUG=true # Set to true to enable debug output
 
 # Add this helper function after the color definitions
 debug_log() {
@@ -76,7 +76,7 @@ setup_temp_dir() {
     TEMP_DIR=$(mktemp -d)
     TEMP_FILE=$(mktemp)
     DESC_FILE=$(mktemp)
-    
+
     # Consolidated cleanup trap for all temporary files and directories
     trap 'cleanup_temp_files' EXIT INT TERM
 }
@@ -194,7 +194,7 @@ select_scripts() {
         --checklist 'Select scripts to install (use SPACE to select/unselect):' \
         $height 100 $((height - 8)) \
         --file '$TEMP_FILE'"
-    
+
     debug_log "Dialog command: $DIALOG_CMD"
 
     # Run dialog with conditional debug output
@@ -224,7 +224,7 @@ select_scripts() {
     if [ "$DEBUG" = true ]; then
         debug_log "Content of DESC_FILE after dialog:"
         cat "$DESC_FILE"
-        
+
         debug_log "Dialog debug output:"
         [ -f "/tmp/dialog_debug.log" ] && cat "/tmp/dialog_debug.log"
     fi
@@ -249,16 +249,28 @@ select_scripts() {
         for script in "${!selected_scripts[@]}"; do
             [ "${selected_scripts[$script]}" -eq 1 ] && echo "  - $script"
         done
-    elif [ $dialog_status -eq 3 ]; then  # Extra button returns 3
+    elif [ $dialog_status -eq 3 ]; then # Extra button returns 3
         # Install all scripts
         clear
         echo -e "\n${BLUE}Installing all scripts${NC}"
+        debug_log "Install All option selected"
+
+        local found_scripts=false
         while IFS= read -r script; do
             script_basename=$(basename "$script")
             selected_scripts[$script_basename]=1
             echo "  - $script_basename"
+            found_scripts=true
+            debug_log "Added to selection: $script_basename"
         done < <(find "$scripts_dir" -type f -name "*")
-        return 0  # Ensure we don't exit here
+
+        if [ "$found_scripts" = false ]; then
+            debug_log "No scripts found in $scripts_dir"
+            echo -e "${RED}Error: No scripts found to install${NC}"
+            exit 1
+        fi
+
+        debug_log "All scripts have been selected for installation"
     else
         echo -e "\n${YELLOW}Installation cancelled by user${NC}"
         exit 1
@@ -337,7 +349,7 @@ main() {
 
     echo -e "${GREEN}Installation v${VERSION} completed successfully!${NC}"
     echo -e "Run ${YELLOW}llama help${NC} to get started."
-    
+
     # Add llama status check
     if command -v llama >/dev/null 2>&1; then
         echo -e "\n${YELLOW}Checking LSM installation status:${NC}"
