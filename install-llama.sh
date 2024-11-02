@@ -474,7 +474,7 @@ cleanup_dialog() {
 }
 
 # Main installation process
-main() {
+mainBACH() {
     echo -e "${GREEN}Starting Llama Script Manager Installation v${VERSION}...${NC}"
 
     check_requirements
@@ -497,6 +497,43 @@ main() {
     else
         echo -e "\n${RED}Warning: 'llama' command not found in PATH${NC}"
     fi
+}
+
+main() {
+    debug_log "Starting main installation process"
+    echo -e "${GREEN}Starting Llama Script Manager Installation v${VERSION}...${NC}"
+
+    debug_log "Checking requirements"
+    check_requirements
+    
+    debug_log "Checking repository"
+    check_repository
+    
+    debug_log "Setting up temporary directory"
+    setup_temp_dir
+    
+    debug_log "Cloning repository"
+    clone_repository
+    
+    debug_log "Creating directories"
+    create_directories
+    
+    debug_log "Starting script selection"
+    select_scripts
+    debug_log "Script selection completed"
+    
+    debug_log "Copying files"
+    copy_files
+    
+    debug_log "Creating symlink"
+    create_symlink
+    
+    debug_log "Cleaning up dialog"
+    cleanup_dialog
+
+    debug_log "Installation completed"
+    echo -e "${GREEN}Installation v${VERSION} completed successfully!${NC}"
+    echo -e "Run ${YELLOW}llama help${NC} to get started."
 }
 
 main
