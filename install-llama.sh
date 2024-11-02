@@ -7,6 +7,7 @@
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Error handling
@@ -80,6 +81,81 @@ create_directories() {
     sudo mkdir -p "$INSTALL_DIR/scripts"
 }
 
+# Script selection interface
+select_scripts() {
+    local scripts_dir="$TEMP_DIR/repo/scripts"
+    if [ ! -d "$scripts_dir" ] || [ -z "$(ls -A "$scripts_dir")" ]; then
+        echo -e "${YELLOW}Warning: No scripts found in repository${NC}"
+        return
+    }
+
+    declare -A selected_scripts
+    local all_scripts=()
+    
+    # Collect all available scripts
+    while IFS= read -r script; do
+        all_scripts+=("$(basename "$script")")
+        selected_scripts["$(basename "$script")"]=0
+    done < <(find "$scripts_dir" -type f -name "*")
+
+    while true; do
+        clear
+        echo -e "${BLUE}Available Scripts:${NC}"
+        echo "0) Install All"
+        echo "A) Toggle All"
+        
+        local idx=1
+        for script in "${all_scripts[@]}"; do
+            local status="${selected_scripts[$script]}"
+            local marker
+            if [ "$status" -eq 1 ]; then
+                marker="${GREEN}[×]${NC}"
+            else
+                marker="${RED}[ ]${NC}"
+            fi
+            printf "%d) %s %s\n" $idx "$marker" "$script"
+            ((idx++))
+        done
+        
+        echo -e "\nC) Continue with installation"
+        echo -e "Q) Quit installation"
+        
+        echo -e "\n${YELLOW}Select an option (0-$((idx-1)), A, C, Q):${NC} "
+        read -r choice
+        
+        case "$choice" in
+            [0-9]*)
+                if [ "$choice" -eq 0 ]; then
+                    # Install all
+                    for script in "${all_scripts[@]}"; do
+                        selected_scripts["$script"]=1
+                    done
+                elif [ "$choice" -le "${#all_scripts[@]}" ]; then
+                    # Toggle individual script
+                    local script="${all_scripts[$((choice-1))]}"
+                    selected_scripts["$script"]=$((1 - selected_scripts["$script"]))
+                fi
+                ;;
+            [Aa])
+                # Toggle all
+                local first_value="${selected_scripts[${all_scripts[0]}]}"
+                local new_value=$((1 - first_value))
+                for script in "${all_scripts[@]}"; do
+                    selected_scripts["$script"]=$new_value
+                done
+                ;;
+            [Cc])
+                # Continue with installation
+                return
+                ;;
+            [Qq])
+                echo -e "${YELLOW}Installation cancelled by user${NC}"
+                exit 0
+                ;;
+        esac
+    done
+}
+
 # Copy files
 copy_files() {
     echo -e "${YELLOW}Copying files...${NC}"
@@ -89,14 +165,22 @@ copy_files() {
         exit 1
     fi
     
+    # Copy main script
     sudo cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"
     sudo chmod +x "$INSTALL_DIR/llama"
     
+    # Copy selected scripts
     if [ -d "$TEMP_DIR/repo/scripts" ]; then
-        sudo cp -r "$TEMP_DIR/repo/scripts/"* "$INSTALL_DIR/scripts/" 2>/dev/null || true
-        sudo find "$INSTALL_DIR/scripts" -type f -exec chmod +x {} \;
-    else
-        echo -e "${YELLOW}Warning: No scripts directory found${NC}"
+        for script in "$TEMP_DIR/repo/scripts"/*; do
+            if [ -f "$script" ]; then
+                script_name=$(basename "$script")
+                if [ "${selected_scripts[$script_name]}" -eq 1 ]; then
+                    echo -e "${GREEN}Installing: $script_name${NC}"
+                    sudo cp "$script" "$INSTALL_DIR/scripts/"
+                    sudo chmod +x "$INSTALL_DIR/scripts/$script_name"
+                fi
+            fi
+        done
     fi
 }
 
@@ -115,6 +199,7 @@ main() {
     setup_temp_dir
     clone_repository
     create_directories
+    select_scripts
     copy_files
     create_symlink
     
