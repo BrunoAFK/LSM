@@ -11,8 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.12"
-echo $VERSION
+VERSION="1.0.13"
 
 # Error handling
 set -e # Exit on error
@@ -205,7 +204,6 @@ select_scripts() {
     fi
 }
 
-# Copy files
 # Copy files with enhanced debugging
 copy_files() {
     echo -e "${YELLOW}Copying files... (Installer v${VERSION})${NC}"
@@ -271,6 +269,23 @@ create_symlink() {
     sudo ln -sf "$INSTALL_DIR/llama" "$BIN_DIR/llama"
 }
 
+# Add this new function before the main() function
+cleanup_dialog() {
+    echo -e "${YELLOW}Cleaning up dialog installation...${NC}"
+    if command -v dialog >/dev/null 2>&1; then
+        if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get remove -y dialog
+            sudo apt-get autoremove -y
+        elif command -v yum >/dev/null 2>&1; then
+            sudo yum remove -y dialog
+        elif command -v dnf >/dev/null 2>&1; then
+            sudo dnf remove -y dialog
+        elif command -v brew >/dev/null 2>&1; then
+            brew uninstall dialog
+        fi
+    fi
+}
+
 # Main installation process
 main() {
     echo -e "${GREEN}Starting Llama Script Manager Installation v${VERSION}...${NC}"
@@ -283,6 +298,7 @@ main() {
     select_scripts
     copy_files
     create_symlink
+    cleanup_dialog
 
     echo -e "${GREEN}Installation v${VERSION} completed successfully!${NC}"
     echo -e "Run ${YELLOW}llama help${NC} to get started."
