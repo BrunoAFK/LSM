@@ -11,7 +11,10 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.38"
+VERSION="1.0.39"
+
+# Global array for selected scripts
+declare -A SELECTED_SCRIPTS
 
 # Error handling
 # Add this function near the top of the script
@@ -120,6 +123,7 @@ create_directories() {
     sudo mkdir -p "$INSTALL_DIR"
     sudo mkdir -p "$INSTALL_DIR/scripts"
 }
+
 # Declare the associative array globally
 declare -A selected_scripts
 declare -A script_descriptions
@@ -456,49 +460,46 @@ select_scripts() {
 
     if [ "$dialog_status" -eq 3 ]; then  # Install All button
         debug_log "Install All button pressed - marking all scripts for installation"
+        echo -e "\n${BLUE}Installing all scripts${NC}"
         
-        # Clear existing selections
-        unset selected_scripts
-        declare -A selected_scripts
+        # Clear the global array
+        SELECTED_SCRIPTS=()
 
         # Find all scripts and mark them for installation
-        while IFS= read -r script; do
+        while IFS= read -r -d '' script; do
             script_basename=$(basename "$script")
-            selected_scripts[$script_basename]=1
-            debug_log "Marking script for installation: $script_basename"
+            SELECTED_SCRIPTS[$script_basename]=1
+            debug_log "Marking for installation: $script_basename"
             echo -e "  - ${GREEN}$script_basename${NC}"
-        done < <(find "$scripts_dir" -type f)
+        done < <(find "$scripts_dir" -type f -print0)
 
-        # Verify selections
-        debug_log "Number of scripts marked for installation: ${#selected_scripts[@]}"
-        for script in "${!selected_scripts[@]}"; do
-            debug_log "Verified selected: $script (value: ${selected_scripts[$script]})"
+        debug_log "Total scripts marked for installation: ${#SELECTED_SCRIPTS[@]}"
+        for script in "${!SELECTED_SCRIPTS[@]}"; do
+            debug_log "Verified selected: $script (value: ${SELECTED_SCRIPTS[$script]})"
         done
 
-        if [ ${#selected_scripts[@]} -eq 0 ]; then
+        if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
             debug_log "ERROR: No scripts were marked for installation"
             echo -e "${RED}Error: No scripts were marked for installation${NC}"
             exit 1
         fi
 
-        return 0
     elif [ "$dialog_status" -eq 0 ]; then  # Normal selection
         debug_log "Processing normal selection"
         
-        # Clear existing selections
-        unset selected_scripts
-        declare -A selected_scripts
+        # Clear the global array
+        SELECTED_SCRIPTS=()
 
         # Process selected scripts from dialog output
         while IFS= read -r selected; do
             selected=${selected//\"/}  # Remove quotes
             if [ -n "$selected" ]; then
-                selected_scripts[$selected]=1
+                SELECTED_SCRIPTS[$selected]=1
                 debug_log "Selected script: $selected"
             fi
         done < <(tr ' ' '\n' < "$DESC_FILE" | grep -v '^$')
 
-        return 0
+        debug_log "Total scripts selected: ${#SELECTED_SCRIPTS[@]}"
     else
         debug_log "Dialog cancelled or error occurred (status: $dialog_status)"
         echo -e "\n${YELLOW}Installation cancelled or error occurred${NC}"
@@ -506,17 +507,16 @@ select_scripts() {
     fi
 }
 
-
 # Copy files with enhanced debugging
 copy_files() {
     echo -e "${YELLOW}Copying files... (Installer v${VERSION})${NC}"
 
     debug_log "Beginning copy_files function"
-    debug_log "Number of selected scripts: ${#selected_scripts[@]}"
+    debug_log "Number of selected scripts: ${#SELECTED_SCRIPTS[@]}"
     
     # List all selected scripts
-    for script_name in "${!selected_scripts[@]}"; do
-        debug_log "Script '$script_name' is marked as: ${selected_scripts[$script_name]}"
+    for script_name in "${!SELECTED_SCRIPTS[@]}"; do
+        debug_log "Script '$script_name' is marked as: ${SELECTED_SCRIPTS[$script_name]}"
     done
 
     # Copy main script
@@ -529,9 +529,10 @@ copy_files() {
         for script in "$TEMP_DIR/repo/scripts"/*; do
             if [ -f "$script" ]; then
                 script_name=$(basename "$script")
-                debug_log "Checking script: $script_name (selected: ${selected_scripts[$script_name]})"
-                if [ "${selected_scripts[$script_name]:-0}" -eq 1 ]; then
+                debug_log "Checking script: $script_name (selected: ${SELECTED_SCRIPTS[$script_name]:-0})"
+                if [ "${SELECTED_SCRIPTS[$script_name]:-0}" -eq 1 ]; then
                     echo -e "${GREEN}Installing: $script_name${NC}"
+                    debug_log "Copying $script_name to $INSTALL_DIR/scripts/"
                     sudo cp "$script" "$INSTALL_DIR/scripts/"
                     sudo chmod +x "$INSTALL_DIR/scripts/$script_name"
                 else
@@ -539,6 +540,8 @@ copy_files() {
                 fi
             fi
         done
+    else
+        debug_log "ERROR: Scripts directory not found: $TEMP_DIR/repo/scripts"
     fi
 }
 
