@@ -11,11 +11,22 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.25"
+VERSION="1.0.26"
 
 # Error handling
+# Add this function near the top of the script
+handle_error() {
+    local exit_code=$1
+    local line_number=$2
+    echo -e "${RED}Installation failed at line $line_number with exit code $exit_code${NC}" >&2
+    if [ "$DEBUG" = true ]; then
+        echo -e "${BLUE}Debug log is available at: /tmp/lsm_install_debug.log${NC}" >&2
+    fi
+    exit 1
+}
+
 set -e # Exit on error
-trap 'echo -e "${RED}Installation failed${NC}"; exit 1' ERR
+trap 'handle_error $? $LINENO' ERR
 
 # Configuration
 GITHUB_USER="BrunoAFK"
