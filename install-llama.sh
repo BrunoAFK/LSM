@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.18"
+VERSION="1.0.19"
 
 # Error handling
 set -e # Exit on error
@@ -210,10 +210,12 @@ select_scripts() {
         # Install all scripts
         clear
         echo -e "\n${BLUE}Installing all scripts${NC}"
-        while IFS= read -r -d '' script; do
+        while IFS= read -r script; do
             script_basename=$(basename "$script")
             selected_scripts[$script_basename]=1
-        done < <(find "$scripts_dir" -type f -name "*" -print0)
+            echo "  - $script_basename"
+        done < <(find "$scripts_dir" -type f -name "*")
+        return 0  # Ensure we don't exit here
     else
         echo -e "\n${YELLOW}Installation cancelled by user${NC}"
         exit 1
