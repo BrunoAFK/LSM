@@ -87,7 +87,7 @@ select_scripts() {
     if [ ! -d "$scripts_dir" ] || [ -z "$(ls -A "$scripts_dir")" ]; then
         echo -e "${YELLOW}Warning: No scripts found in repository${NC}"
         return
-    }
+    fi
 
     declare -A selected_scripts
     local all_scripts=()
