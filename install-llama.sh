@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.16"
+VERSION="1.0.18"
 
 # Error handling
 set -e # Exit on error
@@ -24,6 +24,16 @@ GITHUB_BRANCH="main"
 INSTALL_DIR="/usr/local/lib/llama"
 BIN_DIR="/usr/local/bin"
 REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
+
+# Debug flag
+DEBUG=false  # Set to true to enable debug output
+
+# Add this helper function after the color definitions
+debug_log() {
+    if [ "$DEBUG" = true ]; then
+        echo -e "${BLUE}DEBUG: $1${NC}"
+    fi
+}
 
 # Check required tools
 check_requirements() {
@@ -165,9 +175,10 @@ select_scripts() {
     local height=$((script_num + 10))
     [[ $height -gt 40 ]] && height=40 # Max height
 
-    # Display dialog checklist
+    # Display dialog checklist with extra button
     dialog --title "Script Selection" \
         --backtitle "Llama Script Manager Installer v${VERSION}" \
+        --extra-button --extra-label "Install All" \
         --checklist "Select scripts to install (use SPACE to select/unselect):" \
         $height 100 $((height - 8)) \
         --file "$TEMP_FILE" \
@@ -177,6 +188,7 @@ select_scripts() {
 
     # Process selection
     if [ $dialog_status -eq 0 ]; then
+        # Normal selection processing
         # Reset all selections
         for script in "${!selected_scripts[@]}"; do
             selected_scripts[$script]=0
@@ -194,6 +206,14 @@ select_scripts() {
         for script in "${!selected_scripts[@]}"; do
             [ "${selected_scripts[$script]}" -eq 1 ] && echo "  - $script"
         done
+    elif [ $dialog_status -eq 3 ]; then  # Extra button returns 3
+        # Install all scripts
+        clear
+        echo -e "\n${BLUE}Installing all scripts${NC}"
+        while IFS= read -r -d '' script; do
+            script_basename=$(basename "$script")
+            selected_scripts[$script_basename]=1
+        done < <(find "$scripts_dir" -type f -name "*" -print0)
     else
         echo -e "\n${YELLOW}Installation cancelled by user${NC}"
         exit 1
@@ -204,59 +224,33 @@ select_scripts() {
 copy_files() {
     echo -e "${YELLOW}Copying files... (Installer v${VERSION})${NC}"
 
-    # Show the structure of the cloned repository
-    echo -e "${BLUE}Contents of the cloned repository:${NC}"
-    tree "$TEMP_DIR/repo" # Use 'tree' command to show the directory structure. Install it if it's not available.
-
-    if [ ! -f "$TEMP_DIR/repo/llama" ]; then
-        echo -e "${RED}Error: Main script 'llama' not found in repository${NC}"
-        exit 1
-    fi
-
-    # Show the contents of the 'scripts' directory
-    if [ -d "$TEMP_DIR/repo/scripts" ]; then
-        echo -e "${BLUE}Contents of the 'scripts' directory:${NC}"
-        ls -l "$TEMP_DIR/repo/scripts"
-    else
-        echo -e "${RED}'scripts' directory not found in the cloned repository${NC}"
-    fi
+    debug_log "Selected scripts for installation:"
+    for script_name in "${!selected_scripts[@]}"; do
+        if [ "${selected_scripts[$script_name]}" -eq 1 ]; then
+            debug_log "  - $script_name"
+        fi
+    done
 
     # Copy main script
-    echo -e "${YELLOW}Copying main script 'llama'...${NC}"
+    debug_log "Copying main script 'llama'"
     sudo cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"
     sudo chmod +x "$INSTALL_DIR/llama"
 
-    # Debugging the selected_scripts associative array
-    echo -e "${BLUE}Debugging: Selected scripts before copying...${NC}"
-    for script_name in "${!selected_scripts[@]}"; do
-        echo "Script: $script_name, Selected: ${selected_scripts[$script_name]}"
-    done
-
-    # Copy selected scripts
+    # Copy only selected scripts
     if [ -d "$TEMP_DIR/repo/scripts" ]; then
-        echo -e "${YELLOW}Checking which scripts are selected for copying...${NC}"
         for script in "$TEMP_DIR/repo/scripts"/*; do
             if [ -f "$script" ]; then
                 script_name=$(basename "$script")
-
-                # Show the current script and its selection status
-                echo -e "Script: $script_name, Selected: ${selected_scripts[$script_name]:-0}"
-
-                # Use a default value of 0 if selected_scripts[$script_name] is unset or not a valid integer
-                if [ "${selected_scripts[$script_name]:-0}" -eq 1 ] 2>/dev/null; then
+                if [ "${selected_scripts[$script_name]:-0}" -eq 1 ]; then
                     echo -e "${GREEN}Installing: $script_name${NC}"
                     sudo cp "$script" "$INSTALL_DIR/scripts/"
                     sudo chmod +x "$INSTALL_DIR/scripts/$script_name"
                 else
-                    echo -e "${RED}Skipping: $script_name (not selected)${NC}"
+                    debug_log "Skipping: $script_name (not selected)"
                 fi
             fi
         done
     fi
-
-    # Final check after copying
-    echo -e "${BLUE}Contents of the installation directory '$INSTALL_DIR/scripts':${NC}"
-    ls -l "$INSTALL_DIR/scripts"
 }
 
 # Create symlink
@@ -298,6 +292,14 @@ main() {
 
     echo -e "${GREEN}Installation v${VERSION} completed successfully!${NC}"
     echo -e "Run ${YELLOW}llama help${NC} to get started."
+    
+    # Add llama status check
+    if command -v llama >/dev/null 2>&1; then
+        echo -e "\n${YELLOW}Checking LSM installation status:${NC}"
+        llama status
+    else
+        echo -e "\n${RED}Warning: 'llama' command not found in PATH${NC}"
+    fi
 }
 
 main
