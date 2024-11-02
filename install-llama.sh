@@ -175,9 +175,13 @@ copy_files() {
     
     # Copy selected scripts
     if [ -d "$TEMP_DIR/repo/scripts" ]; then
+        echo -e "${YELLOW}Checking which scripts are selected for copying...${NC}"
         for script in "$TEMP_DIR/repo/scripts"/*; do
             if [ -f "$script" ]; then
                 script_name=$(basename "$script")
+                # Debugging output to check the value of selected_scripts for each script
+                echo -e "Script: $script_name, Selected: ${selected_scripts[$script_name]:-0}"
+                
                 # Use a default value of 0 if selected_scripts[$script_name] is unset or not a valid integer
                 if [ "${selected_scripts[$script_name]:-0}" -eq 1 ] 2>/dev/null; then
                     echo -e "${GREEN}Installing: $script_name${NC}"
@@ -187,6 +191,7 @@ copy_files() {
             fi
         done
     fi
+
 
 }
 
