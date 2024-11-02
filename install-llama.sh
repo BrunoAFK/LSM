@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.30"
+VERSION="1.0.31"
 
 # Error handling
 # Add this function near the top of the script
@@ -488,7 +488,7 @@ select_scripts() {
 }
 
 # Copy files with enhanced debugging
-copy_files() {
+copy_filesBACK() {
     echo -e "${YELLOW}Copying files... (Installer v${VERSION})${NC}"
 
     debug_log "Selected scripts for installation:"
@@ -518,6 +518,46 @@ copy_files() {
             fi
         done
     fi
+}
+
+copy_files() {
+    echo -e "${YELLOW}Copying files... (Installer v${VERSION})${NC}"
+    debug_log "Starting copy_files function"
+
+    debug_log "Selected scripts for installation:"
+    script_count=0
+    for script_name in "${!selected_scripts[@]}"; do
+        if [ "${selected_scripts[$script_name]}" -eq 1 ]; then
+            debug_log "  - $script_name"
+            ((script_count++))
+        fi
+    done
+    debug_log "Total scripts to install: $script_count"
+
+    # Copy main script
+    debug_log "Copying main script 'llama'"
+    sudo cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"
+    sudo chmod +x "$INSTALL_DIR/llama"
+
+    # Copy selected scripts
+    if [ -d "$TEMP_DIR/repo/scripts" ]; then
+        for script in "$TEMP_DIR/repo/scripts"/*; do
+            if [ -f "$script" ]; then
+                script_name=$(basename "$script")
+                debug_log "Processing script: $script_name (selected: ${selected_scripts[$script_name]:-0})"
+                if [ "${selected_scripts[$script_name]:-0}" -eq 1 ]; then
+                    echo -e "${GREEN}Installing: $script_name${NC}"
+                    sudo cp "$script" "$INSTALL_DIR/scripts/"
+                    sudo chmod +x "$INSTALL_DIR/scripts/$script_name"
+                    debug_log "Successfully installed: $script_name"
+                else
+                    debug_log "Skipping: $script_name (not selected)"
+                fi
+            fi
+        done
+    fi
+    
+    debug_log "Completed copy_files function"
 }
 
 # Create symlink
