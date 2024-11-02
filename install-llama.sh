@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.10"
+VERSION="1.0.11"
 
 # Error handling
 set -e # Exit on error
@@ -83,123 +83,111 @@ create_directories() {
     sudo mkdir -p "$INSTALL_DIR"
     sudo mkdir -p "$INSTALL_DIR/scripts"
 }
-
 # Declare the associative array globally
 declare -A selected_scripts
 declare -A script_descriptions
 
-# Script selection interface with additional debugging
+# Script selection interface using dialog
 select_scripts() {
     local scripts_dir="$TEMP_DIR/repo/scripts"
     if [ ! -d "$scripts_dir" ] || [ -z "$(ls -A "$scripts_dir")" ]; then
         echo -e "${YELLOW}Warning: No scripts found in repository${NC}"
         return
+    }
+
+    # Check if dialog is installed, if not - try to install it
+    if ! command -v dialog >/dev/null 2>&1; then
+        echo -e "${YELLOW}Dialog is not installed. Attempting to install...${NC}"
+        
+        # Detect package manager and install dialog
+        if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y dialog
+        elif command -v yum >/dev/null 2>&1; then
+            sudo yum install -y dialog
+        elif command -v dnf >/dev/null 2>&1; then
+            sudo dnf install -y dialog
+        elif command -v brew >/dev/null 2>&1; then
+            brew install dialog
+        else
+            echo -e "${RED}Error: Could not install dialog automatically${NC}"
+            echo "Please install dialog manually for your system"
+            exit 1
+        fi
+        
+        # Check if installation was successful
+        if ! command -v dialog >/dev/null 2>&1; then
+            echo -e "${RED}Error: Failed to install dialog${NC}"
+            exit 1
+        fi
     fi
 
-    local all_scripts=()
+    # Create temporary files for dialog
+    local tempfile=$(mktemp)
+    local descfile=$(mktemp)
+    trap 'rm -f "$tempfile" "$descfile"' EXIT
 
-    # Collect all available scripts and their descriptions
-    echo -e "${BLUE}Collecting available scripts... (Installer v${VERSION})${NC}"
+    # Build the checklist options
+    local script_num=1
     while IFS= read -r script; do
         script_basename=$(basename "$script")
-        all_scripts+=("$script_basename")
-        selected_scripts["$script_basename"]=0
         
         # Extract description from script file
+        description="No description available"
         if [ -f "$script" ]; then
-            description=$(awk '/^#/ && !done {sub(/^# ?/,""); print; if($0=="") done=1}' "$script" | \
-                         grep -i "description:" | \
-                         sed 's/^[Dd]escription: *//')
-            
-            if [ -z "$description" ]; then
-                description="No description available"
-            fi
-            script_descriptions["$script_basename"]="$description"
+            desc=$(awk '/^#/ && !done {sub(/^# ?/,""); print; if($0=="") done=1}' "$script" | \
+                  grep -i "description:" | \
+                  sed 's/^[Dd]escription: *//')
+            [ -n "$desc" ] && description=$desc
         fi
+        script_descriptions[$script_basename]=$description
+        
+        echo "$script_basename \"$description\" off" >> "$tempfile"
+        ((script_num++))
     done < <(find "$scripts_dir" -type f -name "*")
 
-    # Enable terminal mouse and keyboard input
-    tput smcup
-    stty -echo
-    printf "\033[?1000h"  # Enable mouse tracking
-    
-    local selected_idx=0
-    local scroll_pos=0
-    local max_display=10
+    # Display dialog checklist
+    dialog --title "Script Selection" \
+           --backtitle "Llama Script Manager Installer v${VERSION}" \
+           --checklist "Select scripts to install (use SPACE to select/unselect):" \
+           20 80 15 \
+           --file "$tempfile" \
+           2>"$descfile"
 
-    while true; do
-        clear
-        echo -e "${BLUE}Available Scripts (Installer v${VERSION})${NC}"
-        echo -e "${YELLOW}Use UP/DOWN arrows or mouse to select, SPACE to toggle, ENTER to continue, Q to quit${NC}\n"
+    local dialog_status=$?
 
-        # Display scripts with scrolling
-        local displayed=0
-        for ((i=scroll_pos; i<${#all_scripts[@]} && displayed<max_display; i++)); do
-            local script="${all_scripts[$i]}"
-            local status="${selected_scripts[$script]}"
-            local marker
-            if [[ "$status" -eq 1 ]]; then
-                marker="[×]"
-            else
-                marker="[ ]"
-            fi
-
-            # Highlight current selection
-            if [ $i -eq $selected_idx ]; then
-                echo -en "\033[7m"  # Reverse video
-            fi
-
-            printf "%-3d %s %-30s %s\n" \
-                   $((i+1)) "$marker" "$script" "${script_descriptions[$script]}"
-
-            if [ $i -eq $selected_idx ]; then
-                echo -en "\033[0m"  # Normal video
-            fi
-            ((displayed++))
+    # Process selection
+    if [ $dialog_status -eq 0 ]; then
+        # Reset all selections
+        for script in "${!selected_scripts[@]}"; do
+            selected_scripts[$script]=0
         done
 
-        # Read a single character or mouse event
-        read -rsn1 key
-        case "$key" in
-            $'\x1B')  # ESC sequence
-                read -rsn2 key
-                case "$key" in
-                    '[A')  # Up arrow
-                        ((selected_idx > 0)) && ((selected_idx--))
-                        if ((selected_idx < scroll_pos)); then
-                            ((scroll_pos--))
-                        fi
-                        ;;
-                    '[B')  # Down arrow
-                        ((selected_idx < ${#all_scripts[@]}-1)) && ((selected_idx++))
-                        if ((selected_idx >= scroll_pos + max_display)); then
-                            ((scroll_pos++))
-                        fi
-                        ;;
-                esac
-                ;;
-            ' ')  # Space
-                local script="${all_scripts[$selected_idx]}"
-                selected_scripts["$script"]=$((1 - ${selected_scripts[$script]:-0}))
-                ;;
-            $'\x0A')  # Enter
-                break
-                ;;
-            'q'|'Q')
-                echo -e "\n${YELLOW}Installation cancelled by user${NC}"
-                # Cleanup terminal settings
-                printf "\033[?1000l"  # Disable mouse tracking
-                stty echo
-                tput rmcup
-                exit 0
-                ;;
-        esac
-    done
+        # Read selected scripts
+        while read -r selected; do
+            # Remove quotes if present
+            selected=${selected//\"/}
+            selected_scripts[$selected]=1
+        done < <(tr ' ' '\n' < "$descfile")
 
-    # Cleanup terminal settings
-    printf "\033[?1000l"  # Disable mouse tracking
-    stty echo
-    tput rmcup
+        # Show selected scripts
+        clear
+        echo -e "\n${BLUE}Selected scripts to install:${NC}"
+        local selected_count=0
+        for script in "${!selected_scripts[@]}"; do
+            if [ "${selected_scripts[$script]}" -eq 1 ]; then
+                echo "  - $script"
+                ((selected_count++))
+            fi
+        done
+
+        if [ $selected_count -eq 0 ]; then
+            echo -e "${YELLOW}Warning: No scripts were selected${NC}"
+        fi
+    else
+        echo -e "\n${YELLOW}Installation cancelled by user${NC}"
+        exit 1
+    fi
 }
 
 
