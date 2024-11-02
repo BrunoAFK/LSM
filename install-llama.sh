@@ -108,7 +108,7 @@ select_scripts() {
         for script in "${all_scripts[@]}"; do
             local status="${selected_scripts[$script]}"
             local marker
-            if [ "$status" -eq 1 ]; then
+            if [[ "$status" -eq 1 ]]; then
                 marker="[×]"
             else
                 marker="[ ]"
@@ -133,28 +133,32 @@ select_scripts() {
                 elif [ "$choice" -le "${#all_scripts[@]}" ]; then
                     # Toggle individual script
                     local script="${all_scripts[$((choice-1))]}"
-                    selected_scripts["$script"]=$((1 - selected_scripts["$script"]))
+                    selected_scripts["$script"]=$((1 - ${selected_scripts[$script]:-0}))
                 fi
                 ;;
             [Aa])
                 # Toggle all
                 local first_value="${selected_scripts[${all_scripts[0]}]}"
-                local new_value=$((1 - first_value))
+                local new_value=$((1 - ${first_value:-0}))
                 for script in "${all_scripts[@]}"; do
                     selected_scripts["$script"]=$new_value
                 done
                 ;;
             [Cc])
                 # Continue with installation
-                return
+                break
                 ;;
             [Qq])
                 echo -e "${YELLOW}Installation cancelled by user${NC}"
                 exit 0
                 ;;
+            *)
+                echo -e "${RED}Invalid option, please try again.${NC}"
+                ;;
         esac
     done
 }
+
 
 # Copy files
 copy_files() {
