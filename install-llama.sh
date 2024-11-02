@@ -10,7 +10,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.41"
+VERSION="1.0.42"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -39,7 +39,7 @@ BIN_DIR="/usr/local/bin"
 REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
 
 # Debug flag
-DEBUG=true # Set to true to enable debug output
+DEBUG=false # Set to true to enable debug output
 
 # Add this helper function after the color definitions
 debug_log() {
