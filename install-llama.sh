@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.41"
+VERSION="1.0.42"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -233,17 +233,20 @@ select_scripts() {
     local dialog_output=$(mktemp)
     debug_log "Created temporary file for dialog output: $dialog_output"
 
-    # Run dialog and capture both exit status and output
-    dialog --title "Script Selection" \
+    # Run dialog and capture output with proper redirection
+    exec 3>&1
+    selection=$(dialog --title "Script Selection" \
         --backtitle "Llama Script Manager Installer v${VERSION}" \
         --extra-button --extra-label "Install All" \
         --checklist "Select scripts to install (use SPACE to select/unselect):" \
         $height 100 $((height - 8)) \
         --file "$TEMP_FILE" \
-        2>"$dialog_output"
-
+        2>&1 1>&3)
     dialog_status=$?
+    exec 3>&-
+
     debug_log "Dialog exit status: $dialog_status"
+    debug_log "Raw selection output: $selection"
 
     # Clear the global array
     SELECTED_SCRIPTS=()
@@ -343,7 +346,7 @@ copy_files() {
     echo -e "${YELLOW}Copying files... (Installer v${VERSION})${NC}"
     debug_log "Beginning copy_files function"
     debug_log "Number of selected scripts: ${#SELECTED_SCRIPTS[@]}"
-    
+
     # Debug output of what's selected
     for script in "${!SELECTED_SCRIPTS[@]}"; do
         debug_log "Script '$script' is marked as: ${SELECTED_SCRIPTS[$script]}"
