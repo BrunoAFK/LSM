@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.31"
+VERSION="1.0.33"
 
 # Error handling
 # Add this function near the top of the script
@@ -449,27 +449,37 @@ select_scripts() {
             debug_log "Selected script: $selected"
         done < <(tr ' ' '\n' <"$DESC_FILE" | grep -v '^$')
 
-    elif [ $dialog_status -eq 3 ]; then
-        debug_log "Install All button pressed"
-        # Don't clear the screen here
+    elif [ $dialog_status -eq 3 ]; then # Install All button
+        debug_log "Install All button pressed with exit status 3"
         echo -e "\n${BLUE}Installing all scripts${NC}"
 
-        scripts_found=0
+        # Reset all selections first
+        declare -A selected_scripts=()
+
+        # Find and mark all scripts for installation
         while IFS= read -r script; do
             script_basename=$(basename "$script")
             selected_scripts[$script_basename]=1
+            debug_log "Marking for installation: $script_basename"
             echo "  - $script_basename"
-            debug_log "Adding script for installation: $script_basename"
-            ((scripts_found++))
         done < <(find "$scripts_dir" -type f -name "*")
 
-        debug_log "Total scripts marked for installation: $scripts_found"
+        # Verify selections were made
+        script_count=0
+        for script_name in "${!selected_scripts[@]}"; do
+            if [ "${selected_scripts[$script_name]}" -eq 1 ]; then
+                ((script_count++))
+                debug_log "Verified selected for installation: $script_name"
+            fi
+        done
 
-        if [ $scripts_found -eq 0 ]; then
-            debug_log "ERROR: No scripts found to install"
-            echo -e "${RED}Error: No scripts found to install${NC}"
+        if [ $script_count -eq 0 ]; then
+            debug_log "ERROR: No scripts were marked for installation"
+            echo -e "${RED}Error: No scripts were selected for installation${NC}"
             exit 1
         fi
+
+        debug_log "Successfully marked $script_count scripts for installation"
     else
         debug_log "Dialog cancelled with status $dialog_status"
         echo -e "\n${YELLOW}Installation cancelled by user${NC}"
@@ -488,7 +498,7 @@ select_scripts() {
 }
 
 # Copy files with enhanced debugging
-copy_filesBACK() {
+copy_files() {
     echo -e "${YELLOW}Copying files... (Installer v${VERSION})${NC}"
 
     debug_log "Selected scripts for installation:"
@@ -518,46 +528,6 @@ copy_filesBACK() {
             fi
         done
     fi
-}
-
-copy_files() {
-    echo -e "${YELLOW}Copying files... (Installer v${VERSION})${NC}"
-    debug_log "Starting copy_files function"
-
-    debug_log "Selected scripts for installation:"
-    script_count=0
-    for script_name in "${!selected_scripts[@]}"; do
-        if [ "${selected_scripts[$script_name]}" -eq 1 ]; then
-            debug_log "  - $script_name"
-            ((script_count++))
-        fi
-    done
-    debug_log "Total scripts to install: $script_count"
-
-    # Copy main script
-    debug_log "Copying main script 'llama'"
-    sudo cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"
-    sudo chmod +x "$INSTALL_DIR/llama"
-
-    # Copy selected scripts
-    if [ -d "$TEMP_DIR/repo/scripts" ]; then
-        for script in "$TEMP_DIR/repo/scripts"/*; do
-            if [ -f "$script" ]; then
-                script_name=$(basename "$script")
-                debug_log "Processing script: $script_name (selected: ${selected_scripts[$script_name]:-0})"
-                if [ "${selected_scripts[$script_name]:-0}" -eq 1 ]; then
-                    echo -e "${GREEN}Installing: $script_name${NC}"
-                    sudo cp "$script" "$INSTALL_DIR/scripts/"
-                    sudo chmod +x "$INSTALL_DIR/scripts/$script_name"
-                    debug_log "Successfully installed: $script_name"
-                else
-                    debug_log "Skipping: $script_name (not selected)"
-                fi
-            fi
-        done
-    fi
-    
-    debug_log "Completed copy_files function"
 }
 
 # Create symlink
