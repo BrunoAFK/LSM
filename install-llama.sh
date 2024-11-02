@@ -10,7 +10,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.43"
+VERSION="1.0.44"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -20,6 +20,11 @@ declare -A SELECTED_SCRIPTS
 handle_error() {
     local exit_code=$1
     local line_number=$2
+    
+    # Disable error handling
+    set +e
+    trap - ERR
+    
     echo -e "${RED}Installation failed at line $line_number with exit code $exit_code${NC}" >&2
     if [ "$DEBUG" = true ]; then
         echo -e "${BLUE}Debug log is available at: /tmp/lsm_install_debug.log${NC}" >&2
@@ -27,7 +32,36 @@ handle_error() {
     exit 1
 }
 
-set -e # Exit on error
+cleanup_temp_files() {
+    # Disable error handling during cleanup
+    set +e
+    trap - ERR
+    
+    echo -e "${YELLOW}Cleaning up temporary files...${NC}"
+    
+    # Remove temporary directory and its contents
+    if [ -d "$TEMP_DIR" ]; then
+        rm -rf "$TEMP_DIR" || true
+    fi
+    
+    # Remove temporary files
+    if [ -f "$TEMP_FILE" ]; then
+        rm -f "$TEMP_FILE" || true
+    fi
+    if [ -f "$DESC_FILE" ]; then
+        rm -f "$DESC_FILE" || true
+    fi
+    
+    # Remove debug log only if DEBUG is true
+    if [ "$DEBUG" = true ] && [ -f "/tmp/dialog_debug.log" ]; then
+        rm -f "/tmp/dialog_debug.log" || true
+    fi
+    
+    # Re-enable error handling
+    set -e
+}
+
+trap 'cleanup_temp_files' EXIT
 trap 'handle_error $? $LINENO' ERR
 
 # Configuration
@@ -91,20 +125,6 @@ setup_temp_dir() {
 
     # Consolidated cleanup trap for all temporary files and directories
     trap 'cleanup_temp_files' EXIT INT TERM
-}
-
-# Add new cleanup function
-cleanup_temp_files() {
-    echo -e "${YELLOW}Cleaning up temporary files...${NC}"
-    # Remove temporary directory and its contents
-    [ -d "$TEMP_DIR" ] && rm -rf "$TEMP_DIR"
-    # Remove temporary files
-    [ -f "$TEMP_FILE" ] && rm -f "$TEMP_FILE"
-    [ -f "$DESC_FILE" ] && rm -f "$DESC_FILE"
-    # Remove debug log only if DEBUG is true
-    if [ "$DEBUG" = true ]; then
-        [ -f "/tmp/dialog_debug.log" ] && rm -f "/tmp/dialog_debug.log"
-    fi
 }
 
 # Clone repository
@@ -416,9 +436,18 @@ main() {
     debug_log "Cleaning up dialog"
     cleanup_dialog
 
-    debug_log "Installation completed"
+
     echo -e "${GREEN}Installation v${VERSION} completed successfully!${NC}"
     echo -e "Run ${YELLOW}llama help${NC} to get started."
+    debug_log "Installation completed"
+    llama status
+    echo -e "${GREEN}Installation v${VERSION} completed successfully!${NC}"
+    echo -e "Run ${YELLOW}llama help${NC} to get started."
+    
+    # Disable error handling before exiting
+    set +e
+    trap - ERR
+    exit 0
 }
 
 main
