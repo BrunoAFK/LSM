@@ -1,0 +1,74 @@
+#!/bin/bash
+
+# Information header
+# Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
+# Web: pavelja.me
+# Github: github.com/brunoafk
+# Version: 1.0
+# Description: This script extracts URLs from a given RSS/Atom feed and adds them to ArchiveBox.
+# How it works: The script fetches the feed content, extracts all URLs, and saves them in a hash-named file.
+# Important variables:
+#   - LOCATION: Directory where the output file will be stored.
+#   - HASH: Random 32-character hash for unique output file names.
+
+# Function to display help information
+help_function() {
+    echo -e "\e[1;34mScript Name: URL Extractor and Archiver\e[0m"
+    echo -e "\e[1;32mDescription:\e[0m This script extracts URLs from a provided feed URL and adds them to ArchiveBox using Docker Compose."
+    echo
+    echo -e "\e[1;33mUsage:\e[0m"
+    echo "  $0 <feed_url>"
+    echo
+    echo -e "\e[1;33mExample:\e[0m"
+    echo "  $0 https://rss.feed.com/feed"
+    echo
+    echo -e "\e[1;33mAvailable Commands:\e[0m"
+    printf "  %-30s %s\n" "<feed_url>" "The URL of the feed to extract links from"
+    echo
+    echo -e "\e[1;33mNotes:\e[0m"
+    echo "  - Make sure ArchiveBox and Docker are properly set up before running this script."
+    echo "  - The script will clean up the exported file after adding URLs to ArchiveBox."
+}
+
+# Basic setup
+LOCATION="/opt/archive"
+HASH=$(head -c 32 /dev/urandom | md5sum | awk '{print $1}')
+OUTPUT_FILE="$HASH.txt"
+
+# Function to extract URLs from the feed
+# Parameters:
+#   - feed_url: The URL of the RSS/Atom feed to process
+# Description: Fetches the feed content, extracts URLs, and saves them to a file
+extract_urls() {
+    local feed_url="$1"
+
+    # Fetch the feed and extract all link href attributes
+    curl -s "$feed_url" |
+    grep -o '<link href="[^"]*"' |
+    sed 's/<link href="//;s/"//' > "$LOCATION/$OUTPUT_FILE"
+
+    echo "URLs have been exported to $OUTPUT_FILE"
+}
+
+# Check if the help argument is provided
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    help_function
+    exit 0
+fi
+
+# Check if URL argument is provided
+if [ $# -ne 1 ]; then
+    echo -e "\e[1;31mError:\e[0m Missing URL argument."
+    echo "Usage: $0 <feed_url>"
+    echo "Use -h or --help for more information."
+    exit 1
+fi
+
+# Extract URLs
+extract_urls "$1"
+
+# Run ArchiveBox using Docker Compose
+docker compose -f "$LOCATION/docker-compose.yml" run -T archivebox add < "$LOCATION/$OUTPUT_FILE"
+
+# Clean up the exported file
+rm -rf "$LOCATION/$OUTPUT_FILE"

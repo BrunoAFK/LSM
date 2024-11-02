@@ -1,0 +1,153 @@
+#!/bin/bash
+
+# Information header
+# Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
+# Web: pavelja.me
+# Version: 1.2
+# Description: This script runs Watchtower to update Docker containers, cleans up unused Docker resources, and manages a .env file for configuration.
+# How it works: The script can generate or show the .env file and uses it to configure Watchtower.
+
+# Define the path to the .env file
+ENV_FILE="$HOME/.config/llama_env/.env"
+
+# Function to load environment variables from the .env file
+load_env_file() {
+    if [ -f "$ENV_FILE" ]; then
+        # Load the .env file
+        source "$ENV_FILE"
+    else
+        echo -e "\e[1;31mError:\e[0m .env file not found at $ENV_FILE"
+        exit 1
+    fi
+}
+
+# Function to display the contents of the .env file
+show_env_file() {
+    if [ -f "$ENV_FILE" ]; then
+        echo -e "\e[1;34mContents of $ENV_FILE:\e[0m"
+        cat "$ENV_FILE"
+    else
+        echo -e "\e[1;31mError:\e[0m .env file not found at $ENV_FILE"
+        exit 1
+    fi
+}
+
+# Function to generate the .env file by asking for user input
+generate_env_file() {
+    echo "Generating .env file at $ENV_FILE..."
+    mkdir -p "$(dirname "$ENV_FILE")"  # Create the directory if it doesn't exist
+
+    # Ask the user for input
+    read -p "Enter SMTP server port (e.g., 465): " smtp_port
+    read -p "Enter SMTP server user (e.g., no-reply@pavelja.me): " smtp_user
+    read -s -p "Enter SMTP server password (hidden input): " smtp_password
+    echo
+    read -p "Enter sender email address: " email_from
+    read -p "Enter recipient email address: " email_to
+    read -p "Enter SMTP server (e.g., smtp.yandex.com): " smtp_server
+
+    # Write the input to the .env file
+    cat > "$ENV_FILE" <<EOL
+WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PORT=$smtp_port
+WATCHTOWER_NOTIFICATION_EMAIL_SERVER_USER=$smtp_user
+WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PASSWORD=$smtp_password
+WATCHTOWER_NOTIFICATION_EMAIL_FROM=$email_from
+WATCHTOWER_NOTIFICATION_EMAIL_TO=$email_to
+WATCHTOWER_NOTIFICATION_EMAIL_SERVER=$smtp_server
+EOL
+
+    # Secure the .env file
+    chmod 600 "$ENV_FILE"
+    echo -e "\e[1;32m.env file generated and secured at $ENV_FILE\e[0m"
+}
+
+# Function to display help information
+show_help() {
+    echo -e "\e[1;34mDocker Watchtower Update Script v1.2\e[0m"
+    echo
+    echo -e "\e[1;32mDescription:\e[0m"
+    echo "  This script runs Watchtower to update Docker containers, cleans up resources, and manages a .env file for configuration."
+    echo
+    echo -e "\e[1;33mUsage:\e[0m"
+    echo "  ./watchtower_update.sh [COMMAND]"
+    echo
+    echo -e "\e[1;33mCommands:\e[0m"
+    printf "%-15s %-50s\n" "help, -h" "Show this help message"
+    printf "%-15s %-50s\n" "env generate" "Generate the .env file by asking for user input"
+    printf "%-15s %-50s\n" "env show" "Show the contents of the .env file"
+    printf "%-15s %-50s\n" "run" "Run Watchtower and clean up resources"
+    echo
+    echo -e "\e[1;33mConfiguration:\e[0m"
+    echo "  Sensitive information is stored in a .env file located at: $ENV_FILE"
+}
+
+# Check if the help argument is provided
+if [[ "$1" == "-h" || "$1" == "help" ]]; then
+    show_help
+    exit 0
+fi
+
+# Handle the custom arguments for .env management
+case "$1" in
+    "env")
+        case "$2" in
+            "generate")
+                generate_env_file
+                exit 0
+                ;;
+            "show")
+                show_env_file
+                exit 0
+                ;;
+            *)
+                echo -e "\e[1;31mError:\e[0m Invalid argument for 'env'. Use 'env generate' or 'env show'."
+                exit 1
+                ;;
+        esac
+        ;;
+    "run")
+        # Load environment variables from the .env file
+        load_env_file
+
+        # Check if Docker is running
+        if ! docker info >/dev/null 2>&1; then
+            echo -e "\e[1;31mError:\e[0m Docker is not running. Please start Docker and try again."
+            exit 1
+        fi
+
+        # Run Watchtower to update containers
+        echo "Running Watchtower to update Docker containers..."
+        docker run --name watchtower_update \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -e WATCHTOWER_CLEANUP=true \
+            -e WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PORT="$WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PORT" \
+            -e WATCHTOWER_NOTIFICATION_EMAIL_SERVER_USER="$WATCHTOWER_NOTIFICATION_EMAIL_SERVER_USER" \
+            -e WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PASSWORD="$WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PASSWORD" \
+            -e WATCHTOWER_NOTIFICATION_EMAIL_FROM="$WATCHTOWER_NOTIFICATION_EMAIL_FROM" \
+            -e WATCHTOWER_NOTIFICATION_EMAIL_TO="$WATCHTOWER_NOTIFICATION_EMAIL_TO" \
+            -e WATCHTOWER_NOTIFICATION_EMAIL_SERVER="$WATCHTOWER_NOTIFICATION_EMAIL_SERVER" \
+            -e WATCHTOWER_NOTIFICATIONS=email \
+            containrrr/watchtower \
+            --run-once
+
+        # Check if the Watchtower container ran successfully
+        if [ $? -ne 0 ]; then
+            echo -e "\e[1;31mError:\e[0m Watchtower failed to run. Please check your Docker setup and try again."
+            exit 1
+        fi
+
+        # Remove the Watchtower container
+        echo "Removing Watchtower container..."
+        docker rm watchtower_update
+
+        # Clean up unused Docker resources
+        echo "Cleaning up unused Docker resources..."
+        docker system prune -a -f
+
+        echo -e "\e[1;32mCleanup completed successfully.\e[0m"
+        ;;
+    *)
+        echo -e "\e[1;31mError:\e[0m Invalid command. Use 'help' for usage information."
+        exit 1
+        ;;
+esac
