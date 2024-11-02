@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.19"
+VERSION="1.0.20"
 
 # Error handling
 set -e # Exit on error
