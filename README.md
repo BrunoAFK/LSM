@@ -1,100 +1,110 @@
-# Llama Script Manager
+# Llama Script Manager (LSM)
 
-Llama Script Manager is a Bash script designed to simplify the management of "llama" scripts from GitHub or local files, handling installation, updates, and removals seamlessly.
+LSM is a powerful script management system designed to handle installation, updates, and management of "llama" scripts. It supports both production and development environments.
 
-## Description
+## Quick Start (Production Installation)
 
-This script fetches and installs "llama" components from a specified GitHub repository or local files. It also sets up necessary symbolic links and provides options for updating or removing the components.
+Install LSM directly from GitHub:
 
-## How It Works
+```bash
+bash <(curl -s https://raw.githubusercontent.com/BrunoAFK/LSM/main/install-llama.sh)
+```
 
-- **Fetching**: Downloads components from GitHub or uses local files if GitHub is unavailable.
-- **Installation**: Installs scripts into designated directories and sets up symbolic links for easy access.
-- **Updates**: Checks for the latest version from GitHub and updates if needed.
-- **Removal**: Cleans up all installed components and symbolic links.
+Once installed, access LSM commands through the `llama` command:
 
-## Key Variables
+```bash
+llama help          # Show available commands
+llama status        # Check installation status
+```
 
-- `VERSION`: Current version of the script.
-- `DEV_DIR`: Directory for storing the main script and components.
-- `SCRIPTS_DIR`: Directory for storing executable scripts.
-- `GITHUB_USER`, `GITHUB_REPO`, `GITHUB_BRANCH`: GitHub details for fetching scripts.
+## Installation & Environments
+
+LSM supports two environments: Production and Development.
+
+### Production Environment (Recommended)
+- **Installation Directory**: `/usr/local/lib/llama`
+- **Command Access**: `llama` (available system-wide)
+- **Updates**: Automatically fetched from GitHub
+- **Installation Method**: Use the one-line installer above
+
+### Development Environment
+- **Location**: `/opt/llama`
+- **Command Access**: `./llama` (must be in dev directory)
+- **Updates**: Local files only
+- **Installation Method**:
+  ```bash
+  git clone https://github.com/BrunoAFK/LSM.git /opt/llama
+  cd /opt/llama
+  ./llama install
+  ```
 
 ## Usage
 
+### Basic Commands
 ```bash
-llama [COMMAND] [ARGUMENTS]
-llama [OPTIONS]
+llama help          # Show help message
+llama install       # Install or reinstall components
+llama update        # Update to latest version
+llama remove        # Remove installation
+llama status        # Show current status
 ```
 
-### Commands
+### Available Scripts
+Run `llama help` to see all available scripts in your installation.
 
-| Command      | Description                                     |
-|--------------|-------------------------------------------------|
-| `help`, `-h` | Show this help message                          |
-| `install`, `-i` | Install llama script and its components       |
-| `remove`, `-r` | Remove llama script and its components        |
-| `update`, `-u` | Update llama script and its components        |
+## Configuration
 
-## Available Scripts
+LSM automatically configures itself based on your environment:
+- Production: Uses GitHub for updates and installations
+- Development: Uses local files for all operations
 
-The available scripts are listed dynamically from the `SCRIPTS_DIR`. Use `llama help` to view the current scripts installed.
+## Command Reference
 
-## Installation
+| Command | Production Usage | Development Usage | Description |
+|---------|-----------------|-------------------|-------------|
+| Help | `llama help` | `./llama help` | Show available commands |
+| Install | `llama install` | `./llama install` | Install/reinstall components |
+| Update | `llama update` | `./llama update` | Update components |
+| Remove | `llama remove` | `./llama remove` | Remove installation |
+| Status | `llama status` | `./llama status` | Show environment status |
 
-To install the Llama Script Manager:
+## System Requirements
 
-1. Clone the repository or download the script.
-2. Run the script with the install command:
-   ```bash
-   ./llama -i
-   ```
-3. Follow the on-screen instructions to complete the setup.
-
-## Updating
-
-To update the script to the latest version:
-
-```bash
-llama -u
-```
-
-The script will fetch the latest version from GitHub and update if a newer version is available.
-
-## Removal
-
-To remove the script and its components:
-
-```bash
-llama -r
-```
-
-This will remove all installed files and symbolic links.
-
-## Contributing
-
-Feel free to fork the repository and submit pull requests with improvements or new features. Your contributions are welcome!
+- Bash 4.0 or later
+- `curl` for downloading files
+- `git` for cloning repository
+- `sudo` access for installation
 
 ## Troubleshooting
 
-If you encounter any issues:
+### Common Issues
 
-- Ensure you have the correct permissions for script execution.
-- Verify that the GitHub details are correctly configured in the script.
-- Check for updates and re-install if necessary.
+1. **Command Not Found**
+   ```bash
+   # Reinstall production version
+   bash <(curl -s https://raw.githubusercontent.com/BrunoAFK/LSM/main/install-llama.sh)
+   ```
 
----
+2. **Permission Denied**
+   ```bash
+   # Check script permissions
+   ls -l $(which llama)
+   # Fix permissions if needed
+   sudo chmod +x $(which llama)
+   ```
 
-> **Note**: This script requires `curl` for downloading files and `sudo` for administrative permissions when creating directories and symbolic links.
+3. **Updates Not Working**
+   - Ensure you're using the production version (`which llama`)
+   - Check your internet connection
+   - Verify GitHub repository access
 
 ## Author Information
 
 - **Author**: Bruno Pavelja
 - **Website**: [pavelja.me](https://pavelja.me)
 - **GitHub**: [github.com/brunoafk](https://github.com/brunoafk)
-- **Version**: 1.0.0
-
+- **Version**: 1.0.2
 
 ## License
 
-This script is open-source and licensed under the [MIT License](LICENSE).
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

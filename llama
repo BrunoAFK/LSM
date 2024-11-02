@@ -3,28 +3,39 @@
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
 # Github: github.com/brunoafk
-# Version: 1.0.0
-# Description: This script manages the installation, updating, and removal of the "llama" scripts from GitHub or local files.
-# How it works: The script fetches components from GitHub or local files, installs them, and creates necessary symbolic links.
-# Important variables:
-#   - VERSION: The current version of the script.
-#   - DEV_DIR: Directory for storing the main script and components.
-#   - SCRIPTS_DIR: Directory for storing executable scripts.
+# Version: 1.0.2
+# Description: Enhanced script manager with development and production environment support
 
-VERSION="1.0.1"
+VERSION="1.0.2"
 GITHUB_USER="BrunoAFK"
 GITHUB_REPO="LSM"
 GITHUB_BRANCH="main"
 DEV_DIR="/opt/llama"
-SCRIPTS_DIR="/usr/local/lib/llama/scripts"
+INSTALL_DIR="/usr/local/lib/llama"
+SCRIPTS_DIR_PROD="$INSTALL_DIR/scripts"
+SCRIPTS_DIR_DEV="$DEV_DIR/scripts"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/$GITHUB_BRANCH"
 GITHUB_API_BASE="https://api.github.com/repos/$GITHUB_USER/$GITHUB_REPO"
 TEMP_DIR=""
+
+# Determine if we're running in dev or prod mode
+is_dev_mode() {
+    [[ "$(basename "$(pwd)")/$(basename "$0")" == "$(basename "$DEV_DIR")/llama" ]]
+}
 
 # Setup a temporary directory and ensure cleanup on exit
 setup_temp_dir() {
     TEMP_DIR=$(mktemp -d)
     trap 'rm -rf "$TEMP_DIR"' EXIT
+}
+
+# Get appropriate directories based on mode
+get_directories() {
+    if is_dev_mode; then
+        echo "$DEV_DIR" "$SCRIPTS_DIR_DEV"
+    else
+        echo "$INSTALL_DIR" "$SCRIPTS_DIR_PROD"
+    fi
 }
 
 # Return the path for binary installation based on the OS
@@ -36,25 +47,26 @@ get_bin_path() {
     fi
 }
 
-# Display help information
+# Display help information with environment indication
 show_help() {
     echo -e "\e[1;34mLlama Script Manager v$VERSION\e[0m"
     echo
     echo -e "\e[1;32mUsage:\e[0m"
     echo "  llama [COMMAND] [ARGUMENTS]"
-    echo "  llama [OPTIONS]"
     echo
     echo -e "\e[1;33mCommands:\e[0m"
-    printf "%-15s %-40s\n" "Command" "Description"
-    printf "%-15s %-40s\n" "-------" "-----------"
-    printf "%-15s %-40s\n" "help, -h" "Show this help message"
-    printf "%-15s %-40s\n" "install, -i" "Install llama script and its components"
-    printf "%-15s %-40s\n" "remove, -r" "Remove llama script and its components"
-    printf "%-15s %-40s\n" "update, -u" "Update llama script and its components"
+    printf "%-20s %-40s\n" "Command" "Description"
+    printf "%-20s %-40s\n" "-------" "-----------"
+    printf "%-20s %-40s\n" "help, -h" "Show this help message"
+    printf "%-20s %-40s\n" "install, -i" "Install llama script and components"
+    printf "%-20s %-40s\n" "remove, -r" "Remove llama script and components"
+    printf "%-20s %-40s\n" "update, -u" "Update llama script and components"
+    printf "%-20s %-40s\n" "status, -s" "Show current environment status"
     echo
     echo -e "\e[1;33mAvailable Scripts:\e[0m"
-    if [ -d "$SCRIPTS_DIR" ]; then
-        for script in "$SCRIPTS_DIR"/*; do
+    read -r install_dir scripts_dir <<< "$(get_directories)"
+    if [ -d "$scripts_dir" ]; then
+        for script in "$scripts_dir"/*; do
             if [ -x "$script" ]; then
                 echo "  $(basename "$script")"
             fi
@@ -80,21 +92,55 @@ download_file() {
 # Create a symbolic link for the main script
 create_symlink() {
     local bin_path=$(get_bin_path)
-    sudo ln -sf "$DEV_DIR/llama" "$bin_path/llama"
-    echo "Created symbolic link in $bin_path"
+    if ! is_dev_mode; then
+        sudo ln -sf "$PROD_DIR/llama" "$bin_path/llama"
+        echo "Created production symbolic link in $bin_path"
+    fi
 }
 
-# Install from local files if GitHub installation fails
-install_from_local() {
-    echo "Installing from local files..."
-    if [ "$(realpath "$0")" != "$DEV_DIR/llama" ]; then
-        sudo cp "$0" "$DEV_DIR/llama"
-        sudo chmod +x "$DEV_DIR/llama"
+# Install from local development directory
+install_from_dev() {
+    echo "Installing from development directory..."
+    read -r install_dir scripts_dir <<< "$(get_directories)"
+    
+    sudo mkdir -p "$install_dir"
+    sudo mkdir -p "$scripts_dir"
+
+    # Copy main script
+    if [ "$(realpath "$0")" != "$install_dir/llama" ]; then
+        sudo cp "$0" "$install_dir/llama"
+        sudo chmod +x "$install_dir/llama"
     fi
 
+    # Copy scripts
     if [ -d "$DEV_DIR/scripts" ]; then
-        sudo cp -r "$DEV_DIR/scripts/"* "$SCRIPTS_DIR/"
-        find "$SCRIPTS_DIR" -type f -exec sudo chmod +x {} \;
+        sudo cp -r "$DEV_DIR/scripts/"* "$scripts_dir/"
+        find "$scripts_dir" -type f -exec sudo chmod +x {} \;
+    fi
+}
+
+# Install from GitHub (production only)
+install_from_github() {
+    echo "Installing from GitHub..."
+    read -r install_dir scripts_dir <<< "$(get_directories)"
+    
+    sudo mkdir -p "$install_dir"
+    sudo mkdir -p "$scripts_dir"
+
+    # Clone the entire repository
+    git clone "https://github.com/$GITHUB_USER/$GITHUB_REPO.git" "$TEMP_DIR/repo"
+    
+    if [ -d "$TEMP_DIR/repo" ]; then
+        sudo cp "$TEMP_DIR/repo/llama" "$install_dir/llama"
+        sudo chmod +x "$install_dir/llama"
+        
+        if [ -d "$TEMP_DIR/repo/scripts" ]; then
+            sudo cp -r "$TEMP_DIR/repo/scripts/"* "$scripts_dir/"
+            find "$scripts_dir" -type f -exec sudo chmod +x {} \;
+        fi
+    else
+        echo "Failed to clone repository"
+        return 1
     fi
 }
 
@@ -103,71 +149,98 @@ install_script() {
     echo "Installing llama..."
     setup_temp_dir
 
-    sudo mkdir -p "$DEV_DIR"
-    sudo mkdir -p "$SCRIPTS_DIR"
-
-    if [ -n "$GITHUB_USER" ] && [ -n "$GITHUB_REPO" ] && [ "$GITHUB_USER" != "yourusername" ]; then
-        echo "Attempting to install from GitHub..."
-        if download_file "llama" "$TEMP_DIR/llama"; then
-            echo "Successfully downloaded from GitHub"
-            sudo cp "$TEMP_DIR/llama" "$DEV_DIR/llama"
-            sudo chmod +x "$DEV_DIR/llama"
-
-            local scripts_list=$(curl -s "$GITHUB_API_BASE/contents/scripts?ref=$GITHUB_BRANCH" | grep "\"name\":" | cut -d'"' -f4)
-
-            for script in $scripts_list; do
-                echo "Downloading script: $script"
-                if download_file "scripts/$script" "$TEMP_DIR/$script"; then
-                    sudo cp "$TEMP_DIR/$script" "$SCRIPTS_DIR/$script"
-                    sudo chmod +x "$SCRIPTS_DIR/$script"
-                else
-                    echo "Failed to download script: $script"
-                fi
-            done
-        else
-            echo "GitHub download failed. Falling back to local installation..."
-            install_from_local
-        fi
+    if is_dev_mode; then
+        install_from_dev
     else
-        install_from_local
+        install_from_github
     fi
 
     create_symlink
-    echo "Installation completed"
+    echo "Installation completed in $(is_dev_mode && echo "DEVELOPMENT" || echo "PRODUCTION") mode"
 }
 
 # Remove the script and its components
 remove_script() {
+    read -r install_dir scripts_dir <<< "$(get_directories)"
     local bin_path=$(get_bin_path)
-    if [ -L "$bin_path/llama" ]; then
+
+    if ! is_dev_mode && [ -L "$bin_path/llama" ]; then
         sudo rm "$bin_path/llama"
-        echo "Removed symbolic link from $bin_path"
+        echo "Removed production symbolic link from $bin_path"
     fi
-    if [ -d "$SCRIPTS_DIR" ]; then
-        sudo rm -rf "$SCRIPTS_DIR"
-        echo "Removed scripts directory $SCRIPTS_DIR"
+
+    if [ -d "$scripts_dir" ]; then
+        sudo rm -rf "$scripts_dir"
+        echo "Removed scripts directory $scripts_dir"
     fi
-    echo "Llama removed successfully"
+
+    if [ -d "$install_dir" ]; then
+        sudo rm -rf "$install_dir"
+        echo "Removed installation directory $install_dir"
+    fi
+
+    echo "Llama removed successfully from $(is_dev_mode && echo "DEVELOPMENT" || echo "PRODUCTION") environment"
+}
+
+# Show current status
+show_status() {
+    local env_type=$(is_dev_mode && echo "DEVELOPMENT" || echo "PRODUCTION")
+    read -r install_dir scripts_dir <<< "$(get_directories)"
+
+    echo -e "\e[1;34mLlama Script Manager Status\e[0m"
+    echo -e "Environment: \e[1;33m$env_type\e[0m"
+    echo -e "Version: \e[1;32m$VERSION\e[0m"
+    echo -e "Installation Directory: \e[1;36m$install_dir\e[0m"
+    echo -e "Scripts Directory: \e[1;36m$scripts_dir\e[0m"
+    
+    if [ -d "$scripts_dir" ]; then
+        echo -e "\nInstalled Scripts:"
+        for script in "$scripts_dir"/*; do
+            if [ -x "$script" ]; then
+                echo "  - $(basename "$script")"
+            fi
+        done
+    fi
 }
 
 # Check for updates and install them
 update_script() {
-    echo "Checking for updates..."
-    setup_temp_dir
-
-    if [ -n "$GITHUB_USER" ] && [ -n "$GITHUB_REPO" ]; then
-        download_file "llama" "$TEMP_DIR/llama_new"
-        new_version=$(grep "^VERSION=" "$TEMP_DIR/llama_new" | cut -d'"' -f2)
-        if [ "$new_version" != "$VERSION" ]; then
-            echo "Updating from version $VERSION to $new_version"
-            install_script
-        else
-            echo "Already running the latest version ($VERSION)"
-        fi
+    if is_dev_mode; then
+        echo "Development mode: Installing from local files..."
+        install_from_dev
     else
-        echo "GitHub details not configured. Updating from local files..."
-        install_script
+        echo "Production mode: Checking for updates..."
+        setup_temp_dir
+        
+        if install_from_github; then
+            echo "Update completed successfully"
+        else
+            echo "Update failed"
+            return 1
+        fi
     fi
+}
+
+# First-time installation script (to be used with curl)
+generate_install_script() {
+    cat << 'EOF'
+#!/bin/bash
+echo "Downloading and installing Llama Script Manager..."
+TEMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TEMP_DIR"' EXIT
+
+# Clone repository
+git clone "https://github.com/BrunoAFK/LSM.git" "$TEMP_DIR/repo"
+
+if [ -d "$TEMP_DIR/repo" ]; then
+    # Run installation
+    sudo bash "$TEMP_DIR/repo/llama" install
+    echo "Installation completed. Run 'llama help' to get started."
+else
+    echo "Installation failed: Could not download repository"
+    exit 1
+fi
+EOF
 }
 
 # Execute the appropriate command based on the user's input
@@ -184,17 +257,24 @@ case "$1" in
     "update"|"-u")
         update_script
         ;;
+    "status"|"-s")
+        show_status
+        ;;
+    "generate-install")
+        generate_install_script
+        ;;
     "")
         show_help
         ;;
     *)
-        script_path="$SCRIPTS_DIR/$1"
+        read -r install_dir scripts_dir <<< "$(get_directories)"
+        script_path="$scripts_dir/$1"
         if [ -x "$script_path" ]; then
             shift
             exec "$script_path" "$@"
         else
             echo -e "\e[1;31mError:\e[0m Script '$1' not found or not executable"
-            echo "Use 'llama help' to see available scripts"
+            echo "Use '$(is_dev_mode && echo "./llama" || echo "llama") help' to see available scripts"
             exit 1
         fi
         ;;
