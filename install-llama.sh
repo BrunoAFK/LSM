@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.21"
+VERSION="1.0.22"
 
 # Error handling
 set -e # Exit on error
@@ -34,6 +34,8 @@ debug_log() {
         echo -e "${BLUE}DEBUG: $1${NC}"
     fi
 }
+
+debug_log 
 
 # Check required tools
 check_requirements() {
