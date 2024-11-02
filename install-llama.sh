@@ -10,6 +10,9 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Version
+VERSION="1.0.10"
+
 # Error handling
 set -e # Exit on error
 trap 'echo -e "${RED}Installation failed${NC}"; exit 1' ERR
@@ -24,7 +27,7 @@ REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
 
 # Check required tools
 check_requirements() {
-    echo -e "${YELLOW}Checking requirements...${NC}"
+    echo -e "${YELLOW}Checking requirements... (Installer v${VERSION})${NC}"
 
     if ! command -v git &>/dev/null; then
         echo -e "${RED}Error: git is not installed${NC}"
@@ -45,7 +48,7 @@ check_requirements() {
 
 # Check repository availability
 check_repository() {
-    echo -e "${YELLOW}Checking repository availability...${NC}"
+    echo -e "${YELLOW}Checking repository availability... (Installer v${VERSION})${NC}"
 
     if ! curl --output /dev/null --silent --head --fail "https://github.com/$GITHUB_USER/$GITHUB_REPO"; then
         echo -e "${RED}Error: Repository $REPO_URL is not accessible${NC}"
@@ -59,7 +62,7 @@ check_repository() {
 
 # Setup temporary directory
 setup_temp_dir() {
-    echo -e "${YELLOW}Setting up temporary directory...${NC}"
+    echo -e "${YELLOW}Setting up temporary directory... (Installer v${VERSION})${NC}"
     TEMP_DIR=$(mktemp -d)
     trap 'rm -rf "$TEMP_DIR"' EXIT
     echo "Using temporary directory: $TEMP_DIR"
@@ -67,7 +70,7 @@ setup_temp_dir() {
 
 # Clone repository
 clone_repository() {
-    echo -e "${YELLOW}Cloning repository...${NC}"
+    echo -e "${YELLOW}Cloning repository... (Installer v${VERSION})${NC}"
     if ! git clone "$REPO_URL" "$TEMP_DIR/repo" 2>/dev/null; then
         echo -e "${RED}Error: Failed to clone repository${NC}"
         exit 1
@@ -76,7 +79,7 @@ clone_repository() {
 
 # Create directories
 create_directories() {
-    echo -e "${YELLOW}Creating installation directories...${NC}"
+    echo -e "${YELLOW}Creating installation directories... (Installer v${VERSION})${NC}"
     sudo mkdir -p "$INSTALL_DIR"
     sudo mkdir -p "$INSTALL_DIR/scripts"
 }
@@ -96,7 +99,7 @@ select_scripts() {
     local all_scripts=()
 
     # Collect all available scripts and their descriptions
-    echo -e "${BLUE}Collecting available scripts...${NC}"
+    echo -e "${BLUE}Collecting available scripts... (Installer v${VERSION})${NC}"
     while IFS= read -r script; do
         script_basename=$(basename "$script")
         all_scripts+=("$script_basename")
@@ -126,7 +129,7 @@ select_scripts() {
 
     while true; do
         clear
-        echo -e "${BLUE}Available Scripts${NC}"
+        echo -e "${BLUE}Available Scripts (Installer v${VERSION})${NC}"
         echo -e "${YELLOW}Use UP/DOWN arrows or mouse to select, SPACE to toggle, ENTER to continue, Q to quit${NC}\n"
 
         # Display scripts with scrolling
@@ -203,7 +206,7 @@ select_scripts() {
 # Copy files
 # Copy files with enhanced debugging
 copy_files() {
-    echo -e "${YELLOW}Copying files...${NC}"
+    echo -e "${YELLOW}Copying files... (Installer v${VERSION})${NC}"
 
     # Show the structure of the cloned repository
     echo -e "${BLUE}Contents of the cloned repository:${NC}"
@@ -263,13 +266,13 @@ copy_files() {
 
 # Create symlink
 create_symlink() {
-    echo -e "${YELLOW}Creating symlink...${NC}"
+    echo -e "${YELLOW}Creating symlink... (Installer v${VERSION})${NC}"
     sudo ln -sf "$INSTALL_DIR/llama" "$BIN_DIR/llama"
 }
 
 # Main installation process
 main() {
-    echo -e "${GREEN}Starting Llama Script Manager Installation...${NC}"
+    echo -e "${GREEN}Starting Llama Script Manager Installation v${VERSION}...${NC}"
 
     check_requirements
     check_repository
@@ -280,7 +283,7 @@ main() {
     copy_files
     create_symlink
 
-    echo -e "${GREEN}Installation completed successfully!${NC}"
+    echo -e "${GREEN}Installation v${VERSION} completed successfully!${NC}"
     echo -e "Run ${YELLOW}llama help${NC} to get started."
 }
 
