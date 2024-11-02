@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.29"
+VERSION="1.0.30"
 
 # Error handling
 # Add this function near the top of the script
@@ -259,28 +259,37 @@ select_scriptsBACK() {
         for script in "${!selected_scripts[@]}"; do
             [ "${selected_scripts[$script]}" -eq 1 ] && echo "  - $script"
         done
-    elif [ $dialog_status -eq 3 ]; then # Extra button returns 3
-        # Install all scripts
-        # clear
+    elif [ $dialog_status -eq 3 ]; then # Install All button
+        debug_log "Install All button pressed with exit status 3"
         echo -e "\n${BLUE}Installing all scripts${NC}"
-        debug_log "Install All option selected"
 
-        local found_scripts=false
+        # Reset all selections first
+        declare -A selected_scripts=()
+
+        # Find and mark all scripts for installation
         while IFS= read -r script; do
             script_basename=$(basename "$script")
             selected_scripts[$script_basename]=1
+            debug_log "Marking for installation: $script_basename"
             echo "  - $script_basename"
-            found_scripts=true
-            debug_log "Added to selection: $script_basename"
         done < <(find "$scripts_dir" -type f -name "*")
 
-        if [ "$found_scripts" = false ]; then
-            debug_log "No scripts found in $scripts_dir"
-            echo -e "${RED}Error: No scripts found to install${NC}"
+        # Verify selections were made
+        script_count=0
+        for script_name in "${!selected_scripts[@]}"; do
+            if [ "${selected_scripts[$script_name]}" -eq 1 ]; then
+                ((script_count++))
+                debug_log "Verified selected for installation: $script_name"
+            fi
+        done
+
+        if [ $script_count -eq 0 ]; then
+            debug_log "ERROR: No scripts were marked for installation"
+            echo -e "${RED}Error: No scripts were selected for installation${NC}"
             exit 1
         fi
 
-        debug_log "All scripts have been selected for installation"
+        debug_log "Successfully marked $script_count scripts for installation"
     else
         echo -e "\n${YELLOW}Installation cancelled by user${NC}"
         exit 1
