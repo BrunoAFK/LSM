@@ -91,7 +91,7 @@ declare -A script_descriptions
 # Script selection interface using dialog
 select_scripts() {
     local scripts_dir="$TEMP_DIR/repo/scripts"
-    
+
     # Check if directory exists and is not empty
     if [ ! -d "$scripts_dir" ]; then
         echo -e "${YELLOW}Warning: Scripts directory not found${NC}"
@@ -108,7 +108,7 @@ select_scripts() {
     # Check if dialog is installed, if not - try to install it
     if ! command -v dialog >/dev/null 2>&1; then
         echo -e "${YELLOW}Dialog is not installed. Attempting to install...${NC}"
-        
+
         # Detect package manager and install dialog
         if command -v apt-get >/dev/null 2>&1; then
             sudo apt-get update
@@ -124,7 +124,7 @@ select_scripts() {
             echo "Please install dialog manually for your system"
             exit 1
         fi
-        
+
         # Check if installation was successful
         if ! command -v dialog >/dev/null 2>&1; then
             echo -e "${RED}Error: Failed to install dialog${NC}"
@@ -135,9 +135,16 @@ select_scripts() {
     # Create temporary files for dialog with error handling
     local tempfile
     local descfile
-    tempfile=$(mktemp) || { echo "Failed to create temp file"; exit 1; }
-    descfile=$(mktemp) || { rm -f "$tempfile"; echo "Failed to create temp file"; exit 1; }
-    
+    tempfile=$(mktemp) || {
+        echo "Failed to create temp file"
+        exit 1
+    }
+    descfile=$(mktemp) || {
+        rm -f "$tempfile"
+        echo "Failed to create temp file"
+        exit 1
+    }
+
     # Ensure cleanup on exit
     trap 'rm -f "$tempfile" "$descfile"' EXIT
 
@@ -145,31 +152,31 @@ select_scripts() {
     local script_num=1
     while IFS= read -r -d '' script; do
         script_basename=$(basename "$script")
-        
+
         # Extract description more safely
         description="No description available"
         if [ -f "$script" ]; then
-            desc=$(head -n 20 "$script" | grep -i "^#.*description:" | 
-                  head -n 1 | sed 's/^#[ ]*[Dd]escription:[ ]*//')
-            [ -n "$desc" ] && description=${desc:0:60}  # Limit description length
+            desc=$(head -n 20 "$script" | grep -i "^#.*description:" |
+                head -n 1 | sed 's/^#[ ]*[Dd]escription:[ ]*//')
+            [ -n "$desc" ] && description=${desc:0:60} # Limit description length
         fi
         script_descriptions[$script_basename]=$description
-        
-        printf '%s\n' "$script_basename" "\"$description\"" "off" >> "$tempfile"
+
+        printf '%s\n' "$script_basename" "\"$description\"" "off" >>"$tempfile"
         ((script_num++))
     done < <(find "$scripts_dir" -type f -name "*" -print0)
 
     # Calculate dialog dimensions based on number of scripts
     local height=$((script_num + 10))
-    [[ $height -gt 40 ]] && height=40  # Max height
-    
+    [[ $height -gt 40 ]] && height=40 # Max height
+
     # Display dialog checklist
     dialog --title "Script Selection" \
-           --backtitle "Llama Script Manager Installer v${VERSION}" \
-           --checklist "Select scripts to install (use SPACE to select/unselect):" \
-           $height 100 $((height-8)) \
-           --file "$tempfile" \
-           2>"$descfile"
+        --backtitle "Llama Script Manager Installer v${VERSION}" \
+        --checklist "Select scripts to install (use SPACE to select/unselect):" \
+        $height 100 $((height - 8)) \
+        --file "$tempfile" \
+        2>"$descfile"
 
     local dialog_status=$?
 
@@ -184,7 +191,7 @@ select_scripts() {
         while IFS= read -r selected; do
             selected=${selected//\"/}
             [ -n "$selected" ] && selected_scripts[$selected]=1
-        done < <(tr ' ' '\n' < "$descfile" | grep -v '^$')
+        done < <(tr ' ' '\n' <"$descfile" | grep -v '^$')
 
         # Show selected scripts
         clear
@@ -198,7 +205,6 @@ select_scripts() {
     fi
 }
 
-
 # Copy files
 # Copy files with enhanced debugging
 copy_files() {
@@ -206,7 +212,7 @@ copy_files() {
 
     # Show the structure of the cloned repository
     echo -e "${BLUE}Contents of the cloned repository:${NC}"
-    tree "$TEMP_DIR/repo"  # Use 'tree' command to show the directory structure. Install it if it's not available.
+    tree "$TEMP_DIR/repo" # Use 'tree' command to show the directory structure. Install it if it's not available.
 
     if [ ! -f "$TEMP_DIR/repo/llama" ]; then
         echo -e "${RED}Error: Main script 'llama' not found in repository${NC}"
@@ -258,7 +264,6 @@ copy_files() {
     echo -e "${BLUE}Contents of the installation directory '$INSTALL_DIR/scripts':${NC}"
     ls -l "$INSTALL_DIR/scripts"
 }
-
 
 # Create symlink
 create_symlink() {
