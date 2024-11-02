@@ -27,7 +27,7 @@ REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
 
 # Check required tools
 check_requirements() {
-    echo -e "${YELLOW}Checking requirements... (Installer v${VERSION})${NC}"
+    echo -e "${YELLOW}Checking requirements... \(Installer v${VERSION}\)${NC}"
 
     if ! command -v git &>/dev/null; then
         echo -e "${RED}Error: git is not installed${NC}"
@@ -48,7 +48,7 @@ check_requirements() {
 
 # Check repository availability
 check_repository() {
-    echo -e "${YELLOW}Checking repository availability... (Installer v${VERSION})${NC}"
+    echo -e "${YELLOW}Checking repository availability... \(Installer v${VERSION}\)${NC}"
 
     if ! curl --output /dev/null --silent --head --fail "https://github.com/$GITHUB_USER/$GITHUB_REPO"; then
         echo -e "${RED}Error: Repository $REPO_URL is not accessible${NC}"
