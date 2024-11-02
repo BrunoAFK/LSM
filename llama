@@ -69,7 +69,7 @@ show_help() {
     printf "%-20s %-40s\n" "status, -s" "Show current environment status"
     echo
     echo -e "\e[1;33mAvailable Scripts:\e[0m"
-    read -r install_dir scripts_dir <<< "$(get_directories)"
+    read -r install_dir scripts_dir <<<"$(get_directories)"
     if [ -d "$scripts_dir" ]; then
         for script in "$scripts_dir"/*; do
             if [ -x "$script" ]; then
@@ -106,8 +106,8 @@ create_symlink() {
 # Install from local development directory
 install_from_dev() {
     echo "Installing from development directory..."
-    read -r install_dir scripts_dir <<< "$(get_directories)"
-    
+    read -r install_dir scripts_dir <<<"$(get_directories)"
+
     sudo mkdir -p "$install_dir"
     sudo mkdir -p "$scripts_dir"
 
@@ -127,18 +127,18 @@ install_from_dev() {
 # Install from GitHub (production only)
 install_from_github() {
     echo "Installing from GitHub..."
-    read -r install_dir scripts_dir <<< "$(get_directories)"
-    
+    read -r install_dir scripts_dir <<<"$(get_directories)"
+
     sudo mkdir -p "$install_dir"
     sudo mkdir -p "$scripts_dir"
 
     # Clone the entire repository
     git clone "https://github.com/$GITHUB_USER/$GITHUB_REPO.git" "$TEMP_DIR/repo"
-    
+
     if [ -d "$TEMP_DIR/repo" ]; then
         sudo cp "$TEMP_DIR/repo/llama" "$install_dir/llama"
         sudo chmod +x "$install_dir/llama"
-        
+
         if [ -d "$TEMP_DIR/repo/scripts" ]; then
             sudo cp -r "$TEMP_DIR/repo/scripts/"* "$scripts_dir/"
             find "$scripts_dir" -type f -exec sudo chmod +x {} \;
@@ -166,7 +166,7 @@ install_script() {
 
 # Remove the script and its components
 remove_script() {
-    read -r install_dir scripts_dir <<< "$(get_directories)"
+    read -r install_dir scripts_dir <<<"$(get_directories)"
     local bin_path=$(get_bin_path)
 
     if ! is_dev_mode && [ -L "$bin_path/llama" ]; then
@@ -190,14 +190,14 @@ remove_script() {
 # Show current status
 show_status() {
     local env_type=$(is_dev_mode && echo "DEVELOPMENT" || echo "PRODUCTION")
-    read -r install_dir scripts_dir <<< "$(get_directories)"
+    read -r install_dir scripts_dir <<<"$(get_directories)"
 
     echo -e "\e[1;34mLlama Script Manager Status\e[0m"
     echo -e "Environment: \e[1;33m$env_type\e[0m"
     echo -e "Version: \e[1;32m$VERSION\e[0m"
     echo -e "Installation Directory: \e[1;36m$install_dir\e[0m"
     echo -e "Scripts Directory: \e[1;36m$scripts_dir\e[0m"
-    
+
     if [ -d "$scripts_dir" ]; then
         echo -e "\nInstalled Scripts:"
         for script in "$scripts_dir"/*; do
@@ -216,7 +216,7 @@ update_script() {
     else
         echo "Production mode: Checking for updates..."
         setup_temp_dir
-        
+
         if install_from_github; then
             echo "Update completed successfully"
         else
@@ -230,34 +230,40 @@ update_script() {
 # Processes command-line arguments and executes appropriate functions
 # If no known command is provided, attempts to execute it as a script
 case "$1" in
-    "help"|"-h")
+"help" | "-h")
+    show_help
+    ;;
+"install" | "-i")
+    install_script
+    ;;
+"remove" | "-r")
+    remove_script
+    ;;
+"update" | "-u")
+    update_script
+    ;;
+"status" | "-s")
+    show_status
+    ;;
+"")
+    show_help
+    ;;
+*)
+    if [ -z "$1" ]; then
+        echo "Error: No script specified"
         show_help
-        ;;
-    "install"|"-i")
-        install_script
-        ;;
-    "remove"|"-r")
-        remove_script
-        ;;
-    "update"|"-u")
-        update_script
-        ;;
-    "status"|"-s")
-        show_status
-        ;;
-    "")
-        show_help
-        ;;
-    *)
-        read -r install_dir scripts_dir <<< "$(get_directories)"
-        script_path="$scripts_dir/$1"
-        if [ -x "$script_path" ]; then
-            shift
-            exec "$script_path" "$@"
-        else
-            echo -e "\e[1;31mError:\e[0m Script '$1' not found or not executable"
-            echo "Use '$(is_dev_mode && echo "./llama" || echo "llama") help' to see available scripts"
-            exit 1
-        fi
-        ;;
+        exit 1
+    fi
+
+    read -r install_dir scripts_dir <<<"$(get_directories)"
+    script_path="$scripts_dir/$1"
+    if [ -x "$script_path" ]; then
+        shift
+        exec "$script_path" "$@"
+    else
+        echo -e "\e[1;31mError:\e[0m Script '$1' not found or not executable"
+        echo "Use '$(is_dev_mode && echo "./llama" || echo "llama") help' to see available scripts"
+        exit 1
+    fi
+    ;;
 esac
