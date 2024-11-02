@@ -12,6 +12,7 @@ NC='\033[0m' # No Color
 
 # Version
 VERSION="1.0.12"
+echo $VERSION
 
 # Error handling
 set -e # Exit on error
