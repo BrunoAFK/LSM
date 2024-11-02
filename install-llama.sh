@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.15"
+VERSION="1.0.16"
 
 # Error handling
 set -e # Exit on error
@@ -27,7 +27,7 @@ REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
 
 # Check required tools
 check_requirements() {
-    echo -e "${YELLOW}Checking requirements... (Installer v${VERSION})${NC})"
+    echo -e "${YELLOW}Checking requirements... (Installer v${VERSION})${NC}"
 
     if ! command -v git &>/dev/null; then
         echo -e "${RED}Error: git is not installed${NC}"
