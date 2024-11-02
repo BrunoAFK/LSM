@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.27"
+VERSION="1.0.28"
 
 # Error handling
 # Add this function near the top of the script
@@ -42,8 +42,8 @@ DEBUG=true # Set to true to enable debug output
 # Add this helper function after the color definitions
 debug_log() {
     if [ "$DEBUG" = true ]; then
-        echo -e "${BLUE}DEBUG: $1${NC}" >&2  # Write to stderr
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - DEBUG: $1" >> "/tmp/lsm_install_debug.log"
+        echo -e "${BLUE}DEBUG: $1${NC}" >&2 # Write to stderr
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - DEBUG: $1" >>"/tmp/lsm_install_debug.log"
     fi
 }
 
@@ -302,7 +302,7 @@ select_scripts() {
     # Count number of files
     file_count=$(find "$scripts_dir" -type f -name "*" | wc -l)
     debug_log "Found $file_count files in scripts directory"
-    
+
     if [ "$file_count" -eq 0 ]; then
         debug_log "ERROR: No scripts found in repository"
         echo -e "${YELLOW}Warning: No scripts found in repository${NC}"
@@ -327,14 +327,12 @@ select_scripts() {
         else
             debug_log "ERROR: No supported package manager found"
         fi
-
-        # ... [rest of package manager installation code remains the same]
     fi
 
     debug_log "Building script list for dialog"
     # Clear the temp file before writing to it
-    > "$TEMP_FILE"
-    
+    >"$TEMP_FILE"
+
     local script_num=1
     while IFS= read -r -d '' script; do
         script_basename=$(basename "$script")
@@ -354,7 +352,7 @@ select_scripts() {
         ((script_num++))
     done < <(find "$scripts_dir" -type f -name "*" -print0)
 
-    debug_log "Total scripts processed: $((script_num-1))"
+    debug_log "Total scripts processed: $((script_num - 1))"
 
     # Calculate dialog dimensions
     local height=$((script_num + 10))
@@ -362,7 +360,7 @@ select_scripts() {
     debug_log "Dialog height calculated as: $height"
 
     debug_log "Launching dialog command..."
-    
+
     # Run dialog with output to both debug log and DESC_FILE
     if [ "$DEBUG" = true ]; then
         debug_log "Running dialog in debug mode"
@@ -384,36 +382,61 @@ select_scripts() {
             2>"$DESC_FILE"
     fi
 
-    # Store and debug dialog exit status
+    # Modify the select_scripts function's dialog status handling:
     dialog_status=$?
     debug_log "Dialog exit status: $dialog_status"
-    
-    # Debug the contents of DESC_FILE right after dialog
     debug_log "DESC_FILE contents after dialog:"
     debug_log "$(cat "$DESC_FILE")"
 
     if [ $dialog_status -eq 0 ]; then
         debug_log "Processing normal selection"
-        # ... [rest of normal selection processing]
+        # Reset all selections
+        for script in "${!selected_scripts[@]}"; do
+            selected_scripts[$script]=1
+        done
+
+        # Read selected scripts safely
+        while IFS= read -r selected; do
+            selected=${selected//\"/}
+            [ -n "$selected" ] && selected_scripts[$selected]=1
+            debug_log "Selected script: $selected"
+        done < <(tr ' ' '\n' <"$DESC_FILE" | grep -v '^$')
+
     elif [ $dialog_status -eq 3 ]; then
-        debug_log "Install All option selected"
-        clear
+        debug_log "Install All button pressed"
+        # Don't clear the screen here
         echo -e "\n${BLUE}Installing all scripts${NC}"
-        
+
+        scripts_found=0
         while IFS= read -r script; do
             script_basename=$(basename "$script")
             selected_scripts[$script_basename]=1
             echo "  - $script_basename"
-            debug_log "Selected for installation: $script_basename"
+            debug_log "Adding script for installation: $script_basename"
+            ((scripts_found++))
         done < <(find "$scripts_dir" -type f -name "*")
-        
-        debug_log "Completed Install All selection process"
+
+        debug_log "Total scripts marked for installation: $scripts_found"
+
+        if [ $scripts_found -eq 0 ]; then
+            debug_log "ERROR: No scripts found to install"
+            echo -e "${RED}Error: No scripts found to install${NC}"
+            exit 1
+        fi
     else
         debug_log "Dialog cancelled with status $dialog_status"
         echo -e "\n${YELLOW}Installation cancelled by user${NC}"
         exit 1
     fi
-    
+
+    # Add verification of selected scripts
+    debug_log "Verifying selected scripts:"
+    for script_name in "${!selected_scripts[@]}"; do
+        if [ "${selected_scripts[$script_name]}" -eq 1 ]; then
+            debug_log "Verified selected: $script_name"
+        fi
+    done
+
     debug_log "Exiting select_scripts function normally"
 }
 
@@ -505,29 +528,29 @@ main() {
 
     debug_log "Checking requirements"
     check_requirements
-    
+
     debug_log "Checking repository"
     check_repository
-    
+
     debug_log "Setting up temporary directory"
     setup_temp_dir
-    
+
     debug_log "Cloning repository"
     clone_repository
-    
+
     debug_log "Creating directories"
     create_directories
-    
+
     debug_log "Starting script selection"
     select_scripts
     debug_log "Script selection completed"
-    
+
     debug_log "Copying files"
     copy_files
-    
+
     debug_log "Creating symlink"
     create_symlink
-    
+
     debug_log "Cleaning up dialog"
     cleanup_dialog
 
