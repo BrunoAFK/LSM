@@ -113,7 +113,7 @@ select_scripts() {
             else
                 marker="[ ]"
             fi
-            printf "%d) %s %s\n" $idx "$marker" "${GREEN}$script${NC}"
+            printf "%d) %s %s\n" $idx "$marker" "$script"
             ((idx++))
         done
         
