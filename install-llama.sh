@@ -10,7 +10,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.42"
+VERSION="1.0.43"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -39,7 +39,7 @@ BIN_DIR="/usr/local/bin"
 REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
 
 # Debug flag
-DEBUG=false # Set to true to enable debug output
+DEBUG=true # Set to true to enable debug output
 
 # Add this helper function after the color definitions
 debug_log() {
@@ -232,16 +232,32 @@ select_scripts() {
     debug_log "Launching dialog command..."
     echo -e "${BLUE}Launching dialog...${NC}"
 
-    if ! dialog --title "Script Selection" \
+    # In the select_scripts function, replace the dialog command with:
+    if dialog --title "Script Selection" \
         --backtitle "Llama Script Manager Installer v${VERSION}" \
         --extra-button --extra-label "Install All" \
         --checklist "Select scripts to install (use SPACE to select/unselect):" \
         $height 100 $((height - 8)) \
         --file "$TEMP_FILE" \
         2>"$DESC_FILE"; then
-        debug_log "ERROR: Dialog command failed"
-        echo -e "${RED}Error: Script selection dialog failed${NC}"
-        exit 1
+        dialog_status=$?
+        debug_log "Normal selection completed with status: $dialog_status"
+    else
+        dialog_status=$?
+        debug_log "Dialog completed with status: $dialog_status"
+        if [ $dialog_status -eq 3 ]; then
+            debug_log "Install All option selected"
+            # Process all scripts
+            while IFS= read -r -d '' script; do
+                script_basename=$(basename "$script")
+                SELECTED_SCRIPTS[$script_basename]=1
+                debug_log "Adding script to install: $script_basename"
+            done < <(find "$scripts_dir" -type f -print0)
+            return 0
+        elif [ $dialog_status -ne 0 ]; then
+            debug_log "Dialog cancelled or error occurred"
+            return 1
+        fi
     fi
 
     # In the select_scripts function, modify the dialog status handling:
@@ -270,6 +286,12 @@ select_scripts() {
             echo -e "${RED}Error: No scripts were marked for installation${NC}"
             exit 1
         fi
+
+        # Before copying each script:
+        echo -e "${YELLOW}Installing ${#SELECTED_SCRIPTS[@]} scripts...${NC}"
+        for script_name in "${!SELECTED_SCRIPTS[@]}"; do
+            echo -e "${GREEN}- Installing: $script_name${NC}"
+        done
 
         debug_log "Total scripts marked for installation: ${#SELECTED_SCRIPTS[@]}"
         return 0
@@ -362,31 +384,6 @@ cleanup_dialog() {
 }
 
 # Main installation process
-mainBACH() {
-    echo -e "${GREEN}Starting Llama Script Manager Installation v${VERSION}...${NC}"
-
-    check_requirements
-    check_repository
-    setup_temp_dir
-    clone_repository
-    create_directories
-    select_scripts
-    copy_files
-    create_symlink
-    cleanup_dialog
-
-    echo -e "${GREEN}Installation v${VERSION} completed successfully!${NC}"
-    echo -e "Run ${YELLOW}llama help${NC} to get started."
-
-    # Add llama status check
-    if command -v llama >/dev/null 2>&1; then
-        echo -e "\n${YELLOW}Checking LSM installation status:${NC}"
-        llama status
-    else
-        echo -e "\n${RED}Warning: 'llama' command not found in PATH${NC}"
-    fi
-}
-
 main() {
     debug_log "Starting main installation process"
     echo -e "${GREEN}Starting Llama Script Manager Installation v${VERSION}...${NC}"
