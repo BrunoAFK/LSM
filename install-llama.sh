@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.34"
+VERSION="1.0.35"
 
 # Error handling
 # Add this function near the top of the script
@@ -351,10 +351,56 @@ select_scripts() {
 
     # Check if dialog is installed
     debug_log "Checking for dialog installation"
+    # Modify the dialog installation part in select_scripts function
     if ! command -v dialog >/dev/null 2>&1; then
         debug_log "Dialog not found, attempting installation"
         echo -e "${YELLOW}Dialog is not installed. Attempting to install...${NC}"
-        # Add package manager detection and installation code here
+
+        if command -v apt-get >/dev/null 2>&1; then
+            debug_log "Using apt-get to install dialog"
+            # Add error checking and output capture
+            if ! sudo apt-get update 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
+                debug_log "Failed to update apt"
+                exit 1
+            fi
+            debug_log "apt-get update completed"
+
+            if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y dialog 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
+                debug_log "Failed to install dialog"
+                exit 1
+            fi
+            debug_log "dialog installation completed"
+        elif command -v yum >/dev/null 2>&1; then
+            debug_log "Using yum to install dialog"
+            if ! sudo yum install -y dialog 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
+                debug_log "Failed to install dialog"
+                exit 1
+            fi
+        elif command -v dnf >/dev/null 2>&1; then
+            debug_log "Using dnf to install dialog"
+            if ! sudo dnf install -y dialog 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
+                debug_log "Failed to install dialog"
+                exit 1
+            fi
+        elif command -v brew >/dev/null 2>&1; then
+            debug_log "Using brew to install dialog"
+            if ! brew install dialog 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
+                debug_log "Failed to install dialog"
+                exit 1
+            fi
+        else
+            debug_log "ERROR: No supported package manager found"
+            echo -e "${RED}Error: Could not install dialog automatically${NC}"
+            exit 1
+        fi
+
+        # Verify dialog installation
+        if ! command -v dialog >/dev/null 2>&1; then
+            debug_log "ERROR: Dialog installation verification failed"
+            echo -e "${RED}Error: Failed to install dialog${NC}"
+            exit 1
+        fi
+        debug_log "Dialog installation verified successfully"
     fi
 
     # Add a small delay after dialog installation
