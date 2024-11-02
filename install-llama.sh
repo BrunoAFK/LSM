@@ -178,7 +178,8 @@ copy_files() {
         for script in "$TEMP_DIR/repo/scripts"/*; do
             if [ -f "$script" ]; then
                 script_name=$(basename "$script")
-                if [ "${selected_scripts[$script_name]}" -eq 1 ]; then
+                # Use a default value of 0 if selected_scripts[$script_name] is unset or not a valid integer
+                if [ "${selected_scripts[$script_name]:-0}" -eq 1 ] 2>/dev/null; then
                     echo -e "${GREEN}Installing: $script_name${NC}"
                     sudo cp "$script" "$INSTALL_DIR/scripts/"
                     sudo chmod +x "$INSTALL_DIR/scripts/$script_name"
@@ -186,6 +187,7 @@ copy_files() {
             fi
         done
     fi
+
 }
 
 # Create symlink
