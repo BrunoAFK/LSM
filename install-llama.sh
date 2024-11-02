@@ -35,7 +35,7 @@ debug_log() {
     fi
 }
 
-debug_log 
+debug_log "Debug mode is enabled"
 
 # Check required tools
 check_requirements() {
