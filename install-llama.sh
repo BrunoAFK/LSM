@@ -187,6 +187,7 @@ select_scripts() {
     local dialog_status=$?
 
     # Process selection
+    echo $dialog_status
     if [ $dialog_status -eq 0 ]; then
         # Normal selection processing
         # Reset all selections
