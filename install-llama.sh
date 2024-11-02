@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.44"
+VERSION="1.0.41"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -229,68 +229,81 @@ select_scripts() {
     [[ $height -gt 40 ]] && height=40
     debug_log "Dialog height calculated as: $height"
 
-    # Clear the global array
-    SELECTED_SCRIPTS=()
+    # Create a temporary file for dialog output
+    local dialog_output=$(mktemp)
+    debug_log "Created temporary file for dialog output: $dialog_output"
 
-    # Run dialog with different handling
-    tempfile=$(mktemp)
-    debug_log "Created temporary output file: $tempfile"
-
-    # Display dialog and capture its exit status
+    # Run dialog and capture both exit status and output
     dialog --title "Script Selection" \
         --backtitle "Llama Script Manager Installer v${VERSION}" \
         --extra-button --extra-label "Install All" \
-        --separate-output \
         --checklist "Select scripts to install (use SPACE to select/unselect):" \
-        20 80 15 --file "$temp_list" 2>"$tempfile"
+        $height 100 $((height - 8)) \
+        --file "$TEMP_FILE" \
+        2>"$dialog_output"
 
-    local ret=$?
-    debug_log "Dialog return code: $ret"
+    dialog_status=$?
+    debug_log "Dialog exit status: $dialog_status"
 
-    if [ $ret -eq 3 ]; then # Install All was pressed
-        debug_log "Install All selected"
+    # Clear the global array
+    SELECTED_SCRIPTS=()
+
+    if [ "$dialog_status" -eq 3 ]; then # Install All button
+        debug_log "Install All button pressed - marking all scripts for installation"
         echo -e "\n${BLUE}Installing all scripts:${NC}"
 
+        # Find all scripts in the directory
         while IFS= read -r -d '' script; do
             script_basename=$(basename "$script")
             SELECTED_SCRIPTS["$script_basename"]=1
+            debug_log "Marking for installation: $script_basename"
             echo -e "  - ${GREEN}$script_basename${NC}"
-            debug_log "Added to install list: $script_basename"
-        done < <(find "$scripts_dir" -type f -print0)
+        done < <(find "$scripts_dir" -type f -name "*" -print0)
 
-    elif [ $ret -eq 0 ]; then # OK was pressed
-        debug_log "OK selected, processing selections"
+        debug_log "Total scripts marked for installation: ${#SELECTED_SCRIPTS[@]}"
 
-        if [ -s "$tempfile" ]; then
-            while IFS= read -r script; do
-                SELECTED_SCRIPTS["$script"]=1
-                echo -e "  - ${GREEN}$script${NC}"
-                debug_log "Added to install list: $script"
-            done <"$tempfile"
-        fi
+    elif [ "$dialog_status" -eq 0 ]; then # Normal selection
+        debug_log "Processing normal selection"
+        debug_log "Contents of dialog output file:"
+        debug_log "$(cat "$dialog_output")"
+
+        # Read the dialog output and process selections
+        while read -r selected; do
+            selected=${selected//\"/} # Remove quotes
+            if [ -n "$selected" ]; then
+                SELECTED_SCRIPTS["$selected"]=1
+                debug_log "Selected script: $selected"
+                echo -e "  - ${GREEN}$selected${NC}"
+            fi
+        done <"$dialog_output"
+
+        debug_log "Total scripts selected: ${#SELECTED_SCRIPTS[@]}"
     else
-        debug_log "Dialog cancelled (return code: $ret)"
-        echo -e "${YELLOW}Installation cancelled${NC}"
-        rm -f "$temp_list" "$tempfile"
+        debug_log "Dialog cancelled or error occurred (status: $dialog_status)"
+        echo -e "\n${YELLOW}Installation cancelled${NC}"
+        rm -f "$dialog_output"
         exit 1
     fi
 
     # Clean up
-    rm -f "$temp_list" "$tempfile"
+    rm -f "$dialog_output"
 
-    # Verify selections
+    # Verify we have selections
     if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
-        debug_log "No scripts were selected"
+        debug_log "ERROR: No scripts were selected for installation"
         echo -e "${RED}Error: No scripts were selected for installation${NC}"
         exit 1
     fi
 
-    debug_log "Selected scripts: ${!SELECTED_SCRIPTS[*]}"
-    return 0
+    # Debug output of final selections
+    debug_log "Final script selections:"
+    for script in "${!SELECTED_SCRIPTS[@]}"; do
+        debug_log "- $script: ${SELECTED_SCRIPTS[$script]}"
+    done
 }
 
 # Copy files with enhanced debugging
-copy_filesBACK() {
+copy_files() {
     echo -e "${YELLOW}Copying files... (Installer v${VERSION})${NC}"
 
     debug_log "Beginning copy_files function"
@@ -324,42 +337,6 @@ copy_filesBACK() {
         done
     else
         debug_log "ERROR: Scripts directory not found: $TEMP_DIR/repo/scripts"
-    fi
-}
-copy_files() {
-    echo -e "${YELLOW}Copying files... (Installer v${VERSION})${NC}"
-    debug_log "Beginning copy_files function"
-    debug_log "Number of selected scripts: ${#SELECTED_SCRIPTS[@]}"
-
-    # Debug output of what's selected
-    for script in "${!SELECTED_SCRIPTS[@]}"; do
-        debug_log "Script '$script' is marked as: ${SELECTED_SCRIPTS[$script]}"
-    done
-
-    # Copy main script
-    debug_log "Copying main script 'llama'"
-    sudo cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"
-    sudo chmod +x "$INSTALL_DIR/llama"
-
-    # Copy selected scripts
-    if [ -d "$TEMP_DIR/repo/scripts" ]; then
-        for script in "$TEMP_DIR/repo/scripts"/*; do
-            if [ -f "$script" ]; then
-                script_name=$(basename "$script")
-                if [ "${SELECTED_SCRIPTS[$script_name]:-0}" -eq 1 ]; then
-                    echo -e "${GREEN}Installing: $script_name${NC}"
-                    debug_log "Copying $script_name to $INSTALL_DIR/scripts/"
-                    sudo cp "$script" "$INSTALL_DIR/scripts/"
-                    sudo chmod +x "$INSTALL_DIR/scripts/$script_name"
-                else
-                    debug_log "Skipping: $script_name (not selected)"
-                fi
-            fi
-        done
-    else
-        debug_log "ERROR: Scripts directory not found: $TEMP_DIR/repo/scripts"
-        echo -e "${RED}Error: Scripts directory not found${NC}"
-        exit 1
     fi
 }
 
