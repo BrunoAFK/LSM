@@ -2,13 +2,6 @@
 
 Llama Script Manager is a Bash script designed to simplify the management of "llama" scripts from GitHub or local files, handling installation, updates, and removals seamlessly.
 
-## Author Information
-
-- **Author**: Bruno Pavelja - Bruno_AFK - Paveljame IT
-- **Website**: [pavelja.me](https://pavelja.me)
-- **GitHub**: [github.com/brunoafk](https://github.com/brunoafk)
-- **Version**: 1.0.0
-
 ## Description
 
 This script fetches and installs "llama" components from a specified GitHub repository or local files. It also sets up necessary symbolic links and provides options for updating or removing the components.
@@ -82,10 +75,6 @@ This will remove all installed files and symbolic links.
 
 Feel free to fork the repository and submit pull requests with improvements or new features. Your contributions are welcome!
 
-## License
-
-This script is open-source and licensed under the [MIT License](LICENSE).
-
 ## Troubleshooting
 
 If you encounter any issues:
@@ -98,4 +87,14 @@ If you encounter any issues:
 
 > **Note**: This script requires `curl` for downloading files and `sudo` for administrative permissions when creating directories and symbolic links.
 
-Enjoy managing your Llama scripts efficiently!
+## Author Information
+
+- **Author**: Bruno Pavelja - Bruno_AFK - Paveljame IT
+- **Website**: [pavelja.me](https://pavelja.me)
+- **GitHub**: [github.com/brunoafk](https://github.com/brunoafk)
+- **Version**: 1.0.0
+
+
+## License
+
+This script is open-source and licensed under the [MIT License](LICENSE).
