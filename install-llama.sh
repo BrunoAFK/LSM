@@ -26,7 +26,7 @@ BIN_DIR="/usr/local/bin"
 REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
 
 # Debug flag
-DEBUG=false  # Set to true to enable debug output
+DEBUG=true  # Set to true to enable debug output
 
 # Add this helper function after the color definitions
 debug_log() {
