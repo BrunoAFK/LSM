@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# Information header
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
 # Github: github.com/brunoafk
@@ -12,9 +11,9 @@
 #   - DEV_DIR: Directory for storing the main script and components.
 #   - SCRIPTS_DIR: Directory for storing executable scripts.
 
-VERSION="1.0.0"
-GITHUB_USER="yourusername"
-GITHUB_REPO="llama"
+VERSION="1.0.1"
+GITHUB_USER="BrunoAFK"
+GITHUB_REPO="LSM"
 GITHUB_BRANCH="main"
 DEV_DIR="/opt/llama"
 SCRIPTS_DIR="/usr/local/lib/llama/scripts"
