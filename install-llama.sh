@@ -175,17 +175,37 @@ select_scripts() {
 
 
 # Copy files
+# Copy files with enhanced debugging
 copy_files() {
     echo -e "${YELLOW}Copying files...${NC}"
+
+    # Show the structure of the cloned repository
+    echo -e "${BLUE}Contents of the cloned repository:${NC}"
+    tree "$TEMP_DIR/repo"  # Use 'tree' command to show the directory structure. Install it if it's not available.
 
     if [ ! -f "$TEMP_DIR/repo/llama" ]; then
         echo -e "${RED}Error: Main script 'llama' not found in repository${NC}"
         exit 1
     fi
 
+    # Show the contents of the 'scripts' directory
+    if [ -d "$TEMP_DIR/repo/scripts" ]; then
+        echo -e "${BLUE}Contents of the 'scripts' directory:${NC}"
+        ls -l "$TEMP_DIR/repo/scripts"
+    else
+        echo -e "${RED}'scripts' directory not found in the cloned repository${NC}"
+    fi
+
     # Copy main script
+    echo -e "${YELLOW}Copying main script 'llama'...${NC}"
     sudo cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"
     sudo chmod +x "$INSTALL_DIR/llama"
+
+    # Debugging the selected_scripts associative array
+    echo -e "${BLUE}Debugging: Selected scripts before copying...${NC}"
+    for script_name in "${!selected_scripts[@]}"; do
+        echo "Script: $script_name, Selected: ${selected_scripts[$script_name]}"
+    done
 
     # Copy selected scripts
     if [ -d "$TEMP_DIR/repo/scripts" ]; then
@@ -193,7 +213,8 @@ copy_files() {
         for script in "$TEMP_DIR/repo/scripts"/*; do
             if [ -f "$script" ]; then
                 script_name=$(basename "$script")
-                # Debugging output to check the value of selected_scripts for each script
+
+                # Show the current script and its selection status
                 echo -e "Script: $script_name, Selected: ${selected_scripts[$script_name]:-0}"
 
                 # Use a default value of 0 if selected_scripts[$script_name] is unset or not a valid integer
@@ -201,11 +222,18 @@ copy_files() {
                     echo -e "${GREEN}Installing: $script_name${NC}"
                     sudo cp "$script" "$INSTALL_DIR/scripts/"
                     sudo chmod +x "$INSTALL_DIR/scripts/$script_name"
+                else
+                    echo -e "${RED}Skipping: $script_name (not selected)${NC}"
                 fi
             fi
         done
     fi
+
+    # Final check after copying
+    echo -e "${BLUE}Contents of the installation directory '$INSTALL_DIR/scripts':${NC}"
+    ls -l "$INSTALL_DIR/scripts"
 }
+
 
 # Create symlink
 create_symlink() {
