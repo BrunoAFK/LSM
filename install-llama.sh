@@ -83,6 +83,7 @@ create_directories() {
 
 # Declare the associative array globally
 declare -A selected_scripts
+declare -A script_descriptions
 
 # Script selection interface with additional debugging
 select_scripts() {
@@ -94,26 +95,37 @@ select_scripts() {
 
     local all_scripts=()
 
-    # Collect all available scripts
+    # Collect all available scripts and their descriptions
     echo -e "${BLUE}Collecting available scripts...${NC}"
     while IFS= read -r script; do
         script_basename=$(basename "$script")
         all_scripts+=("$script_basename")
         selected_scripts["$script_basename"]=0
-        echo "Found script: $script_basename"
+        
+        # Extract description from script file
+        if [ -f "$script" ]; then
+            # Get description from first comment block
+            description=$(awk '/^#/ && !done {sub(/^# ?/,""); print; if($0=="") done=1}' "$script" | \
+                         grep -i "description:" | \
+                         sed 's/^[Dd]escription: *//')
+            
+            if [ -z "$description" ]; then
+                description="No description available"
+            fi
+            script_descriptions["$script_basename"]="$description"
+        fi
     done < <(find "$scripts_dir" -type f -name "*")
-
-    echo -e "${BLUE}Initial selection status of scripts:${NC}"
-    for script in "${all_scripts[@]}"; do
-        echo "Script: $script, Selected: ${selected_scripts[$script]}"
-    done
 
     while true; do
         clear
-        echo -e "${BLUE}Available Scripts:${NC}"
-        echo "0) Install All"
-        echo "A) Toggle All"
-
+        echo -e "${BLUE}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${BLUE}║                           Available Scripts                                 ║${NC}"
+        echo -e "${BLUE}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
+        echo -e "${BLUE}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${BLUE}║${NC} 0) Install All Scripts                                                    ${BLUE}║${NC}"
+        echo -e "${BLUE}║${NC} A) Toggle All Scripts                                                     ${BLUE}║${NC}"
+        echo -e "${BLUE}╠════════════════════════════════════════════════════════════════════════════╣${NC}"
+        
         local idx=1
         for script in "${all_scripts[@]}"; do
             local status="${selected_scripts[$script]}"
@@ -123,12 +135,23 @@ select_scripts() {
             else
                 marker="[ ]"
             fi
-            printf "%d) %s %s\n" $idx "$marker" "$script"
+            
+            # Format description to fit in table
+            local desc="${script_descriptions[$script]}"
+            local max_desc_length=50
+            if [ ${#desc} -gt $max_desc_length ]; then
+                desc="${desc:0:$max_desc_length}..."
+            fi
+            
+            printf "${BLUE}║${NC} %-3d %s %-20s │ %-50s ${BLUE}║${NC}\n" \
+                   $idx "$marker" "$script" "$desc"
             ((idx++))
         done
-
-        echo -e "\nC) Continue with installation"
-        echo -e "Q) Quit installation"
+        
+        echo -e "${BLUE}╠════════════════════════════════════════════════════════════════════════════╣${NC}"
+        echo -e "${BLUE}║${NC} C) Continue with installation                                             ${BLUE}║${NC}"
+        echo -e "${BLUE}║${NC} Q) Quit installation                                                      ${BLUE}║${NC}"
+        echo -e "${BLUE}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
 
         echo -e "\n${YELLOW}Select an option (0-$((idx - 1)), A, C, Q):${NC} "
         read -r choice
@@ -136,18 +159,15 @@ select_scripts() {
         case "$choice" in
         [0-9]*)
             if [ "$choice" -eq 0 ]; then
-                # Install all
                 for script in "${all_scripts[@]}"; do
                     selected_scripts["$script"]=1
                 done
             elif [ "$choice" -le "${#all_scripts[@]}" ]; then
-                # Toggle individual script
                 local script="${all_scripts[$((choice - 1))]}"
                 selected_scripts["$script"]=$((1 - ${selected_scripts[$script]:-0}))
             fi
             ;;
         [Aa])
-            # Toggle all
             local first_value="${selected_scripts[${all_scripts[0]}]}"
             local new_value=$((1 - ${first_value:-0}))
             for script in "${all_scripts[@]}"; do
@@ -155,7 +175,6 @@ select_scripts() {
             done
             ;;
         [Cc])
-            # Continue with installation
             break
             ;;
         [Qq])
@@ -164,14 +183,9 @@ select_scripts() {
             ;;
         *)
             echo -e "${RED}Invalid option, please try again.${NC}"
+            sleep 1
             ;;
         esac
-    done
-
-    # Final debug output to show selected scripts after selection
-    echo -e "${BLUE}Final selection status of scripts:${NC}"
-    for script in "${all_scripts[@]}"; do
-        echo "Script: $script, Selected: ${selected_scripts[$script]}"
     done
 }
 
