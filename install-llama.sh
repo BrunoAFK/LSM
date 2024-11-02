@@ -20,13 +20,13 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.47"
+VERSION="1.0.48"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
 
 # Debug flag
-DEBUG=true # Set to true to enable debug output
+DEBUG=false # Set to true to enable debug output
 
 #------------------------------------------------------------------------------
 # Core Error Handling Functions
