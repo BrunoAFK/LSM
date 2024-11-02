@@ -27,8 +27,6 @@ REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
 
 # Check required tools
 check_requirements() {
-    echo -e "${YELLOW}Checking requirements... \(Installer v${VERSION}\)${NC}"
-
     if ! command -v git &>/dev/null; then
         echo -e "${RED}Error: git is not installed${NC}"
         echo "Please install git first:"
