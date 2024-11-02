@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.20"
+VERSION="1.0.21"
 
 # Error handling
 set -e # Exit on error
@@ -87,6 +87,10 @@ cleanup_temp_files() {
     # Remove temporary files
     [ -f "$TEMP_FILE" ] && rm -f "$TEMP_FILE"
     [ -f "$DESC_FILE" ] && rm -f "$DESC_FILE"
+    # Remove debug log only if DEBUG is true
+    if [ "$DEBUG" = true ]; then
+        [ -f "/tmp/dialog_debug.log" ] && rm -f "/tmp/dialog_debug.log"
+    fi
 }
 
 # Clone repository
@@ -175,19 +179,55 @@ select_scripts() {
     local height=$((script_num + 10))
     [[ $height -gt 40 ]] && height=40 # Max height
 
-    # Display dialog checklist with extra button
-    dialog --title "Script Selection" \
-        --backtitle "Llama Script Manager Installer v${VERSION}" \
-        --extra-button --extra-label "Install All" \
-        --checklist "Select scripts to install (use SPACE to select/unselect):" \
-        $height 100 $((height - 8)) \
-        --file "$TEMP_FILE" \
-        2>"$DESC_FILE"
+    # Debug: Show content of TEMP_FILE before dialog
+    debug_log "Content of TEMP_FILE before dialog:"
+    if [ "$DEBUG" = true ]; then
+        cat "$TEMP_FILE"
+    fi
 
-    local dialog_status=$?
+    # Store dialog command and show if debugging
+    DIALOG_CMD="dialog --title 'Script Selection' \
+        --backtitle 'Llama Script Manager Installer v${VERSION}' \
+        --extra-button --extra-label 'Install All' \
+        --checklist 'Select scripts to install (use SPACE to select/unselect):' \
+        $height 100 $((height - 8)) \
+        --file '$TEMP_FILE'"
+    
+    debug_log "Dialog command: $DIALOG_CMD"
+
+    # Run dialog with conditional debug output
+    if [ "$DEBUG" = true ]; then
+        dialog --title "Script Selection" \
+            --backtitle "Llama Script Manager Installer v${VERSION}" \
+            --extra-button --extra-label "Install All" \
+            --checklist "Select scripts to install (use SPACE to select/unselect):" \
+            $height 100 $((height - 8)) \
+            --file "$TEMP_FILE" \
+            2> >(tee "$DESC_FILE" >/tmp/dialog_debug.log)
+    else
+        dialog --title "Script Selection" \
+            --backtitle "Llama Script Manager Installer v${VERSION}" \
+            --extra-button --extra-label "Install All" \
+            --checklist "Select scripts to install (use SPACE to select/unselect):" \
+            $height 100 $((height - 8)) \
+            --file "$TEMP_FILE" \
+            2>"$DESC_FILE"
+    fi
+
+    # Store and debug dialog exit status
+    dialog_status=$?
+    debug_log "Dialog exit status: $dialog_status"
+
+    # Debug: Show content of DESC_FILE and debug log
+    if [ "$DEBUG" = true ]; then
+        debug_log "Content of DESC_FILE after dialog:"
+        cat "$DESC_FILE"
+        
+        debug_log "Dialog debug output:"
+        [ -f "/tmp/dialog_debug.log" ] && cat "/tmp/dialog_debug.log"
+    fi
 
     # Process selection
-    echo $dialog_status
     if [ $dialog_status -eq 0 ]; then
         # Normal selection processing
         # Reset all selections
