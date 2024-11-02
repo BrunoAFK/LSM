@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.24"
+VERSION="1.0.25"
 
 # Error handling
 set -e # Exit on error
@@ -31,7 +31,8 @@ DEBUG=true # Set to true to enable debug output
 # Add this helper function after the color definitions
 debug_log() {
     if [ "$DEBUG" = true ]; then
-        echo -e "${BLUE}DEBUG: $1${NC}"
+        echo -e "${BLUE}DEBUG: $1${NC}" >&2  # Write to stderr
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - DEBUG: $1" >> "/tmp/lsm_install_debug.log"
     fi
 }
 
@@ -249,7 +250,7 @@ select_scriptsBACK() {
         done
     elif [ $dialog_status -eq 3 ]; then # Extra button returns 3
         # Install all scripts
-        clear
+        # clear
         echo -e "\n${BLUE}Installing all scripts${NC}"
         debug_log "Install All option selected"
 
