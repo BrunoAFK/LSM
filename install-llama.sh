@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.43"
+VERSION="1.0.44"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -228,10 +228,6 @@ select_scripts() {
     local height=$((script_num + 10))
     [[ $height -gt 40 ]] && height=40
     debug_log "Dialog height calculated as: $height"
-
-    # Create a temporary file for dialog output
-    local dialog_output=$(mktemp)
-    debug_log "Created temporary file for dialog output: $dialog_output"
 
     # Clear the global array
     SELECTED_SCRIPTS=()
