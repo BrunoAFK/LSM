@@ -104,7 +104,6 @@ select_scripts() {
         
         # Extract description from script file
         if [ -f "$script" ]; then
-            # Get description from first comment block
             description=$(awk '/^#/ && !done {sub(/^# ?/,""); print; if($0=="") done=1}' "$script" | \
                          grep -i "description:" | \
                          sed 's/^[Dd]escription: *//')
@@ -116,18 +115,24 @@ select_scripts() {
         fi
     done < <(find "$scripts_dir" -type f -name "*")
 
+    # Enable terminal mouse and keyboard input
+    tput smcup
+    stty -echo
+    printf "\033[?1000h"  # Enable mouse tracking
+    
+    local selected_idx=0
+    local scroll_pos=0
+    local max_display=10
+
     while true; do
         clear
-        echo -e "${BLUE}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${BLUE}║                           Available Scripts                                 ║${NC}"
-        echo -e "${BLUE}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
-        echo -e "${BLUE}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${BLUE}║${NC} 0) Install All Scripts                                                    ${BLUE}║${NC}"
-        echo -e "${BLUE}║${NC} A) Toggle All Scripts                                                     ${BLUE}║${NC}"
-        echo -e "${BLUE}╠════════════════════════════════════════════════════════════════════════════╣${NC}"
-        
-        local idx=1
-        for script in "${all_scripts[@]}"; do
+        echo -e "${BLUE}Available Scripts${NC}"
+        echo -e "${YELLOW}Use UP/DOWN arrows or mouse to select, SPACE to toggle, ENTER to continue, Q to quit${NC}\n"
+
+        # Display scripts with scrolling
+        local displayed=0
+        for ((i=scroll_pos; i<${#all_scripts[@]} && displayed<max_display; i++)); do
+            local script="${all_scripts[$i]}"
             local status="${selected_scripts[$script]}"
             local marker
             if [[ "$status" -eq 1 ]]; then
@@ -135,58 +140,63 @@ select_scripts() {
             else
                 marker="[ ]"
             fi
-            
-            # Format description to fit in table
-            local desc="${script_descriptions[$script]}"
-            local max_desc_length=50
-            if [ ${#desc} -gt $max_desc_length ]; then
-                desc="${desc:0:$max_desc_length}..."
+
+            # Highlight current selection
+            if [ $i -eq $selected_idx ]; then
+                echo -en "\033[7m"  # Reverse video
             fi
-            
-            printf "${BLUE}║${NC} %-3d %s %-20s │ %-50s ${BLUE}║${NC}\n" \
-                   $idx "$marker" "$script" "$desc"
-            ((idx++))
+
+            printf "%-3d %s %-30s %s\n" \
+                   $((i+1)) "$marker" "$script" "${script_descriptions[$script]}"
+
+            if [ $i -eq $selected_idx ]; then
+                echo -en "\033[0m"  # Normal video
+            fi
+            ((displayed++))
         done
-        
-        echo -e "${BLUE}╠════════════════════════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${BLUE}║${NC} C) Continue with installation                                             ${BLUE}║${NC}"
-        echo -e "${BLUE}║${NC} Q) Quit installation                                                      ${BLUE}║${NC}"
-        echo -e "${BLUE}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
 
-        echo -e "\n${YELLOW}Select an option (0-$((idx - 1)), A, C, Q):${NC} "
-        read -r choice
-
-        case "$choice" in
-        [0-9]*)
-            if [ "$choice" -eq 0 ]; then
-                for script in "${all_scripts[@]}"; do
-                    selected_scripts["$script"]=1
-                done
-            elif [ "$choice" -le "${#all_scripts[@]}" ]; then
-                local script="${all_scripts[$((choice - 1))]}"
+        # Read a single character or mouse event
+        read -rsn1 key
+        case "$key" in
+            $'\x1B')  # ESC sequence
+                read -rsn2 key
+                case "$key" in
+                    '[A')  # Up arrow
+                        ((selected_idx > 0)) && ((selected_idx--))
+                        if ((selected_idx < scroll_pos)); then
+                            ((scroll_pos--))
+                        fi
+                        ;;
+                    '[B')  # Down arrow
+                        ((selected_idx < ${#all_scripts[@]}-1)) && ((selected_idx++))
+                        if ((selected_idx >= scroll_pos + max_display)); then
+                            ((scroll_pos++))
+                        fi
+                        ;;
+                esac
+                ;;
+            ' ')  # Space
+                local script="${all_scripts[$selected_idx]}"
                 selected_scripts["$script"]=$((1 - ${selected_scripts[$script]:-0}))
-            fi
-            ;;
-        [Aa])
-            local first_value="${selected_scripts[${all_scripts[0]}]}"
-            local new_value=$((1 - ${first_value:-0}))
-            for script in "${all_scripts[@]}"; do
-                selected_scripts["$script"]=$new_value
-            done
-            ;;
-        [Cc])
-            break
-            ;;
-        [Qq])
-            echo -e "${YELLOW}Installation cancelled by user${NC}"
-            exit 0
-            ;;
-        *)
-            echo -e "${RED}Invalid option, please try again.${NC}"
-            sleep 1
-            ;;
+                ;;
+            $'\x0A')  # Enter
+                break
+                ;;
+            'q'|'Q')
+                echo -e "\n${YELLOW}Installation cancelled by user${NC}"
+                # Cleanup terminal settings
+                printf "\033[?1000l"  # Disable mouse tracking
+                stty echo
+                tput rmcup
+                exit 0
+                ;;
         esac
     done
+
+    # Cleanup terminal settings
+    printf "\033[?1000l"  # Disable mouse tracking
+    stty echo
+    tput rmcup
 }
 
 
