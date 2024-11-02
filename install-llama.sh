@@ -109,11 +109,11 @@ select_scripts() {
             local status="${selected_scripts[$script]}"
             local marker
             if [ "$status" -eq 1 ]; then
-                marker="${GREEN}[×]${NC}"
+                marker="[×]"
             else
-                marker="${RED}[ ]${NC}"
+                marker="[ ]"
             fi
-            printf "%d) %s %s\n" $idx "$marker" "$script"
+            printf "%d) %s %s\n" $idx "$marker" "${GREEN}$script${NC}"
             ((idx++))
         done
         
