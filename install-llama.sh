@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.37"
+VERSION="1.0.38"
 
 # Error handling
 # Add this function near the top of the script
@@ -454,50 +454,56 @@ select_scripts() {
     debug_log "Dialog exit status: $dialog_status"
     echo -e "${BLUE}Dialog exited with status: $dialog_status${NC}"
 
-    if [ "$dialog_status" -eq 0 ]; then
-        debug_log "Processing normal selection"
-        # Reset all selections
-        for script in "${!selected_scripts[@]}"; do
-            selected_scripts[$script]=0
-        done
+    if [ "$dialog_status" -eq 3 ]; then  # Install All button
+        debug_log "Install All button pressed - marking all scripts for installation"
+        
+        # Clear existing selections
+        unset selected_scripts
+        declare -A selected_scripts
 
-        # Read selected scripts safely
-        while IFS= read -r selected; do
-            selected=${selected//\"/}
-            [ -n "$selected" ] && selected_scripts[$selected]=1
-            debug_log "Selected script: $selected"
-        done < <(tr ' ' '\n' <"$DESC_FILE" | grep -v '^$')
-    elif [ "$dialog_status" -eq 3 ]; then
-        debug_log "Install All button pressed"
-        echo -e "\n${BLUE}Installing all scripts${NC}"
-
-        # Reset the selected_scripts array
-        declare -A selected_scripts=()
-
-        # Find and mark all scripts for installation
-        while IFS= read -r -d '' script; do
+        # Find all scripts and mark them for installation
+        while IFS= read -r script; do
             script_basename=$(basename "$script")
             selected_scripts[$script_basename]=1
-            echo "  - $script_basename"
-            debug_log "Marking for installation: $script_basename"
-        done < <(find "$scripts_dir" -type f -name "*" -print0)
+            debug_log "Marking script for installation: $script_basename"
+            echo -e "  - ${GREEN}$script_basename${NC}"
+        done < <(find "$scripts_dir" -type f)
 
-        # Verify that scripts were selected
-        script_count=${#selected_scripts[@]}
-        if [ $script_count -eq 0 ]; then
-            debug_log "ERROR: No scripts found to install"
-            echo -e "${RED}Error: No scripts found to install${NC}"
+        # Verify selections
+        debug_log "Number of scripts marked for installation: ${#selected_scripts[@]}"
+        for script in "${!selected_scripts[@]}"; do
+            debug_log "Verified selected: $script (value: ${selected_scripts[$script]})"
+        done
+
+        if [ ${#selected_scripts[@]} -eq 0 ]; then
+            debug_log "ERROR: No scripts were marked for installation"
+            echo -e "${RED}Error: No scripts were marked for installation${NC}"
             exit 1
         fi
-        debug_log "Total scripts marked for installation: $script_count"
+
+        return 0
+    elif [ "$dialog_status" -eq 0 ]; then  # Normal selection
+        debug_log "Processing normal selection"
+        
+        # Clear existing selections
+        unset selected_scripts
+        declare -A selected_scripts
+
+        # Process selected scripts from dialog output
+        while IFS= read -r selected; do
+            selected=${selected//\"/}  # Remove quotes
+            if [ -n "$selected" ]; then
+                selected_scripts[$selected]=1
+                debug_log "Selected script: $selected"
+            fi
+        done < <(tr ' ' '\n' < "$DESC_FILE" | grep -v '^$')
+
+        return 0
     else
-        debug_log "Dialog cancelled or unexpected action occurred"
-        echo -e "\n${YELLOW}Installation cancelled or an unexpected action occurred${NC}"
+        debug_log "Dialog cancelled or error occurred (status: $dialog_status)"
+        echo -e "\n${YELLOW}Installation cancelled or error occurred${NC}"
         exit 1
     fi
-
-    # Final debug output
-    debug_log "Finished processing script selections"
 }
 
 
@@ -505,11 +511,12 @@ select_scripts() {
 copy_files() {
     echo -e "${YELLOW}Copying files... (Installer v${VERSION})${NC}"
 
-    debug_log "Selected scripts for installation:"
+    debug_log "Beginning copy_files function"
+    debug_log "Number of selected scripts: ${#selected_scripts[@]}"
+    
+    # List all selected scripts
     for script_name in "${!selected_scripts[@]}"; do
-        if [ "${selected_scripts[$script_name]}" -eq 1 ]; then
-            debug_log "  - $script_name"
-        fi
+        debug_log "Script '$script_name' is marked as: ${selected_scripts[$script_name]}"
     done
 
     # Copy main script
@@ -517,11 +524,12 @@ copy_files() {
     sudo cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"
     sudo chmod +x "$INSTALL_DIR/llama"
 
-    # Copy only selected scripts
+    # Copy selected scripts
     if [ -d "$TEMP_DIR/repo/scripts" ]; then
         for script in "$TEMP_DIR/repo/scripts"/*; do
             if [ -f "$script" ]; then
                 script_name=$(basename "$script")
+                debug_log "Checking script: $script_name (selected: ${selected_scripts[$script_name]})"
                 if [ "${selected_scripts[$script_name]:-0}" -eq 1 ]; then
                     echo -e "${GREEN}Installing: $script_name${NC}"
                     sudo cp "$script" "$INSTALL_DIR/scripts/"
