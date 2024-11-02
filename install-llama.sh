@@ -81,7 +81,7 @@ create_directories() {
     sudo mkdir -p "$INSTALL_DIR/scripts"
 }
 
-# Script selection interface
+# Script selection interface with additional debugging
 select_scripts() {
     local scripts_dir="$TEMP_DIR/repo/scripts"
     if [ ! -d "$scripts_dir" ] || [ -z "$(ls -A "$scripts_dir")" ]; then
@@ -93,10 +93,18 @@ select_scripts() {
     local all_scripts=()
 
     # Collect all available scripts
+    echo -e "${BLUE}Collecting available scripts...${NC}"
     while IFS= read -r script; do
-        all_scripts+=("$(basename "$script")")
-        selected_scripts["$(basename "$script")"]=0
+        script_basename=$(basename "$script")
+        all_scripts+=("$script_basename")
+        selected_scripts["$script_basename"]=0
+        echo "Found script: $script_basename"
     done < <(find "$scripts_dir" -type f -name "*")
+
+    echo -e "${BLUE}Initial selection status of scripts:${NC}"
+    for script in "${all_scripts[@]}"; do
+        echo "Script: $script, Selected: ${selected_scripts[$script]}"
+    done
 
     while true; do
         clear
@@ -157,7 +165,14 @@ select_scripts() {
             ;;
         esac
     done
+
+    # Final debug output to show selected scripts after selection
+    echo -e "${BLUE}Final selection status of scripts:${NC}"
+    for script in "${all_scripts[@]}"; do
+        echo "Script: $script, Selected: ${selected_scripts[$script]}"
+    done
 }
+
 
 # Copy files
 copy_files() {
