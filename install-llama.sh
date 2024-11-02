@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.35"
+VERSION="1.0.36"
 
 # Error handling
 # Add this function near the top of the script
@@ -351,7 +351,6 @@ select_scripts() {
 
     # Check if dialog is installed
     debug_log "Checking for dialog installation"
-    # Modify the dialog installation part in select_scripts function
     if ! command -v dialog >/dev/null 2>&1; then
         debug_log "Dialog not found, attempting installation"
         echo -e "${YELLOW}Dialog is not installed. Attempting to install...${NC}"
@@ -450,12 +449,25 @@ select_scripts() {
             2>"$DESC_FILE"
     fi
 
-    # Check dialog exit status and debug
+    # Check dialog exit status and handle "Install All" button
     dialog_status=$?
     debug_log "Dialog exit status: $dialog_status"
     echo -e "${BLUE}Dialog exited with status: $dialog_status${NC}"
 
-    if [ "$dialog_status" -eq 3 ]; then
+    if [ "$dialog_status" -eq 0 ]; then
+        debug_log "Processing normal selection"
+        # Reset all selections
+        for script in "${!selected_scripts[@]}"; do
+            selected_scripts[$script]=0
+        done
+
+        # Read selected scripts safely
+        while IFS= read -r selected; do
+            selected=${selected//\"/}
+            [ -n "$selected" ] && selected_scripts[$selected]=1
+            debug_log "Selected script: $selected"
+        done < <(tr ' ' '\n' <"$DESC_FILE" | grep -v '^$')
+    elif [ "$dialog_status" -eq 3 ]; then
         debug_log "Install All button pressed"
         echo -e "\n${BLUE}Installing all scripts${NC}"
 
@@ -468,15 +480,14 @@ select_scripts() {
             ((scripts_found++))
         done < <(find "$scripts_dir" -type f -name "*")
 
-        debug_log "Total scripts marked for installation: $scripts_found"
-        
         if [ $scripts_found -eq 0 ]; then
             debug_log "ERROR: No scripts found to install"
             echo -e "${RED}Error: No scripts found to install${NC}"
             exit 1
         fi
+        debug_log "Total scripts marked for installation: $scripts_found"
     else
-        debug_log "Dialog cancelled or other action taken"
+        debug_log "Dialog cancelled or unexpected action occurred"
         echo -e "\n${YELLOW}Installation cancelled or an unexpected action occurred${NC}"
         exit 1
     fi
