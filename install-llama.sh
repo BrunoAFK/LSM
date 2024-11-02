@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Error handling
-set -e  # Exit on error
+set -e # Exit on error
 trap 'echo -e "${RED}Installation failed${NC}"; exit 1' ERR
 
 # Configuration
@@ -25,8 +25,8 @@ REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
 # Check required tools
 check_requirements() {
     echo -e "${YELLOW}Checking requirements...${NC}"
-    
-    if ! command -v git &> /dev/null; then
+
+    if ! command -v git &>/dev/null; then
         echo -e "${RED}Error: git is not installed${NC}"
         echo "Please install git first:"
         echo "  For Ubuntu/Debian: sudo apt-get install git"
@@ -34,7 +34,7 @@ check_requirements() {
         exit 1
     fi
 
-    if ! command -v curl &> /dev/null; then
+    if ! command -v curl &>/dev/null; then
         echo -e "${RED}Error: curl is not installed${NC}"
         echo "Please install curl first:"
         echo "  For Ubuntu/Debian: sudo apt-get install curl"
@@ -46,7 +46,7 @@ check_requirements() {
 # Check repository availability
 check_repository() {
     echo -e "${YELLOW}Checking repository availability...${NC}"
-    
+
     if ! curl --output /dev/null --silent --head --fail "https://github.com/$GITHUB_USER/$GITHUB_REPO"; then
         echo -e "${RED}Error: Repository $REPO_URL is not accessible${NC}"
         echo "Please check:"
@@ -91,7 +91,7 @@ select_scripts() {
 
     declare -A selected_scripts
     local all_scripts=()
-    
+
     # Collect all available scripts
     while IFS= read -r script; do
         all_scripts+=("$(basename "$script")")
@@ -103,7 +103,7 @@ select_scripts() {
         echo -e "${BLUE}Available Scripts:${NC}"
         echo "0) Install All"
         echo "A) Toggle All"
-        
+
         local idx=1
         for script in "${all_scripts[@]}"; do
             local status="${selected_scripts[$script]}"
@@ -116,68 +116,71 @@ select_scripts() {
             printf "%d) %s %s\n" $idx "$marker" "$script"
             ((idx++))
         done
-        
+
         echo -e "\nC) Continue with installation"
         echo -e "Q) Quit installation"
-        
-        echo -e "\n${YELLOW}Select an option (0-$((idx-1)), A, C, Q):${NC} "
+
+        echo -e "\n${YELLOW}Select an option (0-$((idx - 1)), A, C, Q):${NC} "
         read -r choice
-        
+
         case "$choice" in
-            [0-9]*)
-                if [ "$choice" -eq 0 ]; then
-                    # Install all
-                    for script in "${all_scripts[@]}"; do
-                        selected_scripts["$script"]=1
-                    done
-                elif [ "$choice" -le "${#all_scripts[@]}" ]; then
-                    # Toggle individual script
-                    local script="${all_scripts[$((choice-1))]}"
-                    selected_scripts["$script"]=$((1 - ${selected_scripts[$script]:-0}))
-                fi
-                ;;
-            [Aa])
-                # Toggle all
-                local first_value="${selected_scripts[${all_scripts[0]}]}"
-                local new_value=$((1 - ${first_value:-0}))
+        [0-9]*)
+            if [ "$choice" -eq 0 ]; then
+                # Install all
                 for script in "${all_scripts[@]}"; do
-                    selected_scripts["$script"]=$new_value
+                    selected_scripts["$script"]=1
                 done
-                ;;
-            [Cc])
-                # Continue with installation
-                break
-                ;;
-            [Qq])
-                echo -e "${YELLOW}Installation cancelled by user${NC}"
-                exit 0
-                ;;
-            *)
-                echo -e "${RED}Invalid option, please try again.${NC}"
-                ;;
+            elif [ "$choice" -le "${#all_scripts[@]}" ]; then
+                # Toggle individual script
+                local script="${all_scripts[$((choice - 1))]}"
+                selected_scripts["$script"]=$((1 - ${selected_scripts[$script]:-0}))
+            fi
+            ;;
+        [Aa])
+            # Toggle all
+            local first_value="${selected_scripts[${all_scripts[0]}]}"
+            local new_value=$((1 - ${first_value:-0}))
+            for script in "${all_scripts[@]}"; do
+                selected_scripts["$script"]=$new_value
+            done
+            ;;
+        [Cc])
+            # Continue with installation
+            break
+            ;;
+        [Qq])
+            echo -e "${YELLOW}Installation cancelled by user${NC}"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Invalid option, please try again.${NC}"
+            ;;
         esac
     done
 }
 
-
 # Copy files
 copy_files() {
     echo -e "${YELLOW}Copying files...${NC}"
-    
+
     if [ ! -f "$TEMP_DIR/repo/llama" ]; then
         echo -e "${RED}Error: Main script 'llama' not found in repository${NC}"
         exit 1
     fi
-    
+
     # Copy main script
     sudo cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"
     sudo chmod +x "$INSTALL_DIR/llama"
-    
+
     # Copy selected scripts
     if [ -d "$TEMP_DIR/repo/scripts" ]; then
+        echo -e "${YELLOW}Checking which scripts are selected for copying...${NC}"
         for script in "$TEMP_DIR/repo/scripts"/*; do
             if [ -f "$script" ]; then
                 script_name=$(basename "$script")
+                # Debugging output to check the value of selected_scripts for each script
+                echo -e "Script: $script_name, Selected: ${selected_scripts[$script_name]:-0}"
+
                 # Use a default value of 0 if selected_scripts[$script_name] is unset or not a valid integer
                 if [ "${selected_scripts[$script_name]:-0}" -eq 1 ] 2>/dev/null; then
                     echo -e "${GREEN}Installing: $script_name${NC}"
@@ -187,7 +190,6 @@ copy_files() {
             fi
         done
     fi
-
 }
 
 # Create symlink
@@ -199,7 +201,7 @@ create_symlink() {
 # Main installation process
 main() {
     echo -e "${GREEN}Starting Llama Script Manager Installation...${NC}"
-    
+
     check_requirements
     check_repository
     setup_temp_dir
@@ -208,7 +210,7 @@ main() {
     select_scripts
     copy_files
     create_symlink
-    
+
     echo -e "${GREEN}Installation completed successfully!${NC}"
     echo -e "Run ${YELLOW}llama help${NC} to get started."
 }
