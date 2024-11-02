@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.36"
+VERSION="1.0.37"
 
 # Error handling
 # Add this function near the top of the script
@@ -287,12 +287,12 @@ select_scriptsBACK() {
         declare -A selected_scripts=()
 
         # Find and mark all scripts for installation
-        while IFS= read -r script; do
+        while IFS= read -r -d '' script; do
             script_basename=$(basename "$script")
             selected_scripts[$script_basename]=1
             debug_log "Marking for installation: $script_basename"
             echo "  - $script_basename"
-        done < <(find "$scripts_dir" -type f -name "*")
+        done < <(find "$scripts_dir" -type f -name "*" -print0)
 
         # Verify selections were made
         script_count=0
@@ -471,21 +471,25 @@ select_scripts() {
         debug_log "Install All button pressed"
         echo -e "\n${BLUE}Installing all scripts${NC}"
 
-        local scripts_found=0
-        while IFS= read -r script; do
+        # Reset the selected_scripts array
+        declare -A selected_scripts=()
+
+        # Find and mark all scripts for installation
+        while IFS= read -r -d '' script; do
             script_basename=$(basename "$script")
             selected_scripts[$script_basename]=1
             echo "  - $script_basename"
             debug_log "Marking for installation: $script_basename"
-            ((scripts_found++))
-        done < <(find "$scripts_dir" -type f -name "*")
+        done < <(find "$scripts_dir" -type f -name "*" -print0)
 
-        if [ $scripts_found -eq 0 ]; then
+        # Verify that scripts were selected
+        script_count=${#selected_scripts[@]}
+        if [ $script_count -eq 0 ]; then
             debug_log "ERROR: No scripts found to install"
             echo -e "${RED}Error: No scripts found to install${NC}"
             exit 1
         fi
-        debug_log "Total scripts marked for installation: $scripts_found"
+        debug_log "Total scripts marked for installation: $script_count"
     else
         debug_log "Dialog cancelled or unexpected action occurred"
         echo -e "\n${YELLOW}Installation cancelled or an unexpected action occurred${NC}"
