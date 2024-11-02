@@ -6,7 +6,7 @@
 # Version: 1.0.8
 # Description: Enhanced script manager with development and production environment support
 
-VERSION="1.0.8"
+VERSION="1.0.9"
 GITHUB_USER="BrunoAFK"
 GITHUB_REPO="LSM"
 GITHUB_BRANCH="main"
@@ -221,28 +221,6 @@ update_script() {
     fi
 }
 
-# First-time installation script (to be used with curl)
-generate_install_script() {
-    cat << 'EOF'
-#!/bin/bash
-echo "Downloading and installing Llama Script Manager..."
-TEMP_DIR=$(mktemp -d)
-trap 'rm -rf "$TEMP_DIR"' EXIT
-
-# Clone repository
-git clone "https://github.com/BrunoAFK/LSM.git" "$TEMP_DIR/repo"
-
-if [ -d "$TEMP_DIR/repo" ]; then
-    # Run installation
-    sudo bash "$TEMP_DIR/repo/llama" install
-    echo "Installation completed. Run 'llama help' to get started."
-else
-    echo "Installation failed: Could not download repository"
-    exit 1
-fi
-EOF
-}
-
 # Execute the appropriate command based on the user's input
 case "$1" in
     "help"|"-h")
@@ -259,9 +237,6 @@ case "$1" in
         ;;
     "status"|"-s")
         show_status
-        ;;
-    "generate-install")
-        generate_install_script
         ;;
     "")
         show_help

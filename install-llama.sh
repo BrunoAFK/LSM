@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.41"
+VERSION="1.0.40"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -229,77 +229,75 @@ select_scripts() {
     [[ $height -gt 40 ]] && height=40
     debug_log "Dialog height calculated as: $height"
 
-    # Create a temporary file for dialog output
-    local dialog_output=$(mktemp)
-    debug_log "Created temporary file for dialog output: $dialog_output"
+    # Launch dialog
+    debug_log "Launching dialog command..."
+    if [ "$DEBUG" = true ]; then
+        dialog --title "Script Selection" \
+            --backtitle "Llama Script Manager Installer v${VERSION}" \
+            --extra-button --extra-label "Install All" \
+            --checklist "Select scripts to install (use SPACE to select/unselect):" \
+            $height 100 $((height - 8)) \
+            --file "$TEMP_FILE" \
+            2> >(tee "$DESC_FILE" >/tmp/dialog_debug.log)
+    else
+        dialog --title "Script Selection" \
+            --backtitle "Llama Script Manager Installer v${VERSION}" \
+            --extra-button --extra-label "Install All" \
+            --checklist "Select scripts to install (use SPACE to select/unselect):" \
+            $height 100 $((height - 8)) \
+            --file "$TEMP_FILE" \
+            2>"$DESC_FILE"
+    fi
 
-    # Run dialog and capture both exit status and output
-    dialog --title "Script Selection" \
-        --backtitle "Llama Script Manager Installer v${VERSION}" \
-        --extra-button --extra-label "Install All" \
-        --checklist "Select scripts to install (use SPACE to select/unselect):" \
-        $height 100 $((height - 8)) \
-        --file "$TEMP_FILE" \
-        2>"$dialog_output"
-
+    # Check dialog exit status and handle "Install All" button
     dialog_status=$?
     debug_log "Dialog exit status: $dialog_status"
+    echo -e "${BLUE}Dialog exited with status: $dialog_status${NC}"
 
-    # Clear the global array
-    SELECTED_SCRIPTS=()
+    # Print contents of DESC_FILE for debugging
+    debug_log "Contents of DESC_FILE:"
+    cat "$DESC_FILE" | debug_log
 
-    if [ "$dialog_status" -eq 3 ]; then # Install All button
-        debug_log "Install All button pressed - marking all scripts for installation"
-        echo -e "\n${BLUE}Installing all scripts:${NC}"
-
-        # Find all scripts in the directory
-        while IFS= read -r -d '' script; do
-            script_basename=$(basename "$script")
-            SELECTED_SCRIPTS["$script_basename"]=1
-            debug_log "Marking for installation: $script_basename"
-            echo -e "  - ${GREEN}$script_basename${NC}"
-        done < <(find "$scripts_dir" -type f -name "*" -print0)
-
-        debug_log "Total scripts marked for installation: ${#SELECTED_SCRIPTS[@]}"
-
-    elif [ "$dialog_status" -eq 0 ]; then # Normal selection
+    if [ "$dialog_status" -eq 0 ]; then
         debug_log "Processing normal selection"
-        debug_log "Contents of dialog output file:"
-        debug_log "$(cat "$dialog_output")"
+        # Reset all selections
+        for script in "${!selected_scripts[@]}"; do
+            selected_scripts[$script]=0
+        done
 
-        # Read the dialog output and process selections
-        while read -r selected; do
-            selected=${selected//\"/} # Remove quotes
-            if [ -n "$selected" ]; then
-                SELECTED_SCRIPTS["$selected"]=1
-                debug_log "Selected script: $selected"
-                echo -e "  - ${GREEN}$selected${NC}"
-            fi
-        done <"$dialog_output"
+        # Read selected scripts safely
+        while IFS= read -r selected; do
+            selected=${selected//\"/}
+            [ -n "$selected" ] && selected_scripts[$selected]=1
+            debug_log "Selected script: $selected"
+        done < <(tr ' ' '\n' <"$DESC_FILE" | grep -v '^$')
+    elif [ "$dialog_status" -eq 3 ]; then
+        debug_log "Install All button pressed"
+        echo -e "\n${BLUE}Installing all scripts${NC}"
 
-        debug_log "Total scripts selected: ${#SELECTED_SCRIPTS[@]}"
+        local scripts_found=0
+        while IFS= read -r script; do
+            script_basename=$(basename "$script")
+            selected_scripts[$script_basename]=1
+            echo "  - $script_basename"
+            debug_log "Marking for installation: $script_basename"
+            ((scripts_found++))
+        done < <(find "$scripts_dir" -type f -name "*")
+
+        if [ $scripts_found -eq 0 ]; then
+            debug_log "ERROR: No scripts found to install"
+            echo -e "${RED}Error: No scripts found to install${NC}"
+            exit 1
+        fi
+        debug_log "Total scripts marked for installation: $scripts_found"
     else
-        debug_log "Dialog cancelled or error occurred (status: $dialog_status)"
-        echo -e "\n${YELLOW}Installation cancelled${NC}"
-        rm -f "$dialog_output"
+        debug_log "Dialog cancelled or unexpected action occurred"
+        echo -e "\n${YELLOW}Installation cancelled or an unexpected action occurred${NC}"
         exit 1
     fi
 
-    # Clean up
-    rm -f "$dialog_output"
-
-    # Verify we have selections
-    if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
-        debug_log "ERROR: No scripts were selected for installation"
-        echo -e "${RED}Error: No scripts were selected for installation${NC}"
-        exit 1
-    fi
-
-    # Debug output of final selections
-    debug_log "Final script selections:"
-    for script in "${!SELECTED_SCRIPTS[@]}"; do
-        debug_log "- $script: ${SELECTED_SCRIPTS[$script]}"
-    done
+    # Final debug output
+    debug_log "Finished processing script selections"
 }
 
 # Copy files with enhanced debugging
