@@ -1,2 +1,52 @@
 #!/bin/bash
-echo "Test script $@"
+
+# Information header
+# Author: Bruno Pavelja - Bruno_AFK - Paveljame IT      
+# Web: pavelja.me
+# Github: github.com/brunoafk
+# Version: 1.0
+# Description: A test script that demonstrates various script functionalities
+# How it works: The script showcases different operations based on provided arguments
+
+# Function to display help information
+show_help() {
+    echo -e "\e[1;34mTest Script v1.0\e[0m"
+    echo
+    echo -e "\e[1;32mDescription:\e[0m"
+    echo "  This script demonstrates various bash script functionalities and argument handling."
+    echo
+    echo -e "\e[1;33mUsage:\e[0m"
+    echo "  ./test.sh [COMMAND] [ARGS]"
+    echo
+    echo -e "\e[1;33mCommands:\e[0m"
+    printf "%-15s %-50s\n" "help, -h" "Show this help message"
+    printf "%-15s %-50s\n" "echo [TEXT]" "Echo back the provided text"
+    printf "%-15s %-50s\n" "list" "List files in current directory"
+    printf "%-15s %-50s\n" "date" "Show current date and time"
+}
+
+# Check if help is requested
+if [[ "$1" == "-h" || "$1" == "help" ]]; then
+    show_help
+    exit 0
+fi
+
+# Handle different commands
+case "$1" in
+    "echo")
+        shift  # Remove first argument
+        echo "Echo output: $@"
+        ;;
+    "list")
+        echo "Listing current directory:"
+        ls -la
+        ;;
+    "date")
+        echo "Current date and time:"
+        date
+        ;;
+    *)
+        echo -e "\e[1;31mError:\e[0m Invalid command. Use 'help' for usage information."
+        exit 1
+        ;;
+esac
