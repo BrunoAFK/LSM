@@ -89,7 +89,7 @@ If you encounter any issues:
 
 ## Author Information
 
-- **Author**: Bruno Pavelja - Bruno_AFK - Paveljame IT
+- **Author**: Bruno Pavelja
 - **Website**: [pavelja.me](https://pavelja.me)
 - **GitHub**: [github.com/brunoafk](https://github.com/brunoafk)
 - **Version**: 1.0.0
