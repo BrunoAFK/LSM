@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.13"
+VERSION="1.0.14
 
 # Error handling
 set -e # Exit on error
@@ -60,12 +60,25 @@ check_repository() {
     fi
 }
 
-# Setup temporary directory
+# Setup temporary directory and files
 setup_temp_dir() {
     echo -e "${YELLOW}Setting up temporary directory... (Installer v${VERSION})${NC}"
     TEMP_DIR=$(mktemp -d)
-    trap 'rm -rf "$TEMP_DIR"' EXIT
-    echo "Using temporary directory: $TEMP_DIR"
+    TEMP_FILE=$(mktemp)
+    DESC_FILE=$(mktemp)
+    
+    # Consolidated cleanup trap for all temporary files and directories
+    trap 'cleanup_temp_files' EXIT INT TERM
+}
+
+# Add new cleanup function
+cleanup_temp_files() {
+    echo -e "${YELLOW}Cleaning up temporary files...${NC}"
+    # Remove temporary directory and its contents
+    [ -d "$TEMP_DIR" ] && rm -rf "$TEMP_DIR"
+    # Remove temporary files
+    [ -f "$TEMP_FILE" ] && rm -f "$TEMP_FILE"
+    [ -f "$DESC_FILE" ] && rm -f "$DESC_FILE"
 }
 
 # Clone repository
@@ -131,22 +144,7 @@ select_scripts() {
         fi
     fi
 
-    # Create temporary files for dialog with error handling
-    local tempfile
-    local descfile
-    tempfile=$(mktemp) || {
-        echo "Failed to create temp file"
-        exit 1
-    }
-    descfile=$(mktemp) || {
-        rm -f "$tempfile"
-        echo "Failed to create temp file"
-        exit 1
-    }
-
-    # Ensure cleanup on exit
-    trap 'rm -f "$tempfile" "$descfile"' EXIT
-
+    # Use global temp files instead of creating new ones
     # Build the checklist options
     local script_num=1
     while IFS= read -r -d '' script; do
@@ -157,11 +155,11 @@ select_scripts() {
         if [ -f "$script" ]; then
             desc=$(head -n 20 "$script" | grep -i "^#.*description:" |
                 head -n 1 | sed 's/^#[ ]*[Dd]escription:[ ]*//')
-            [ -n "$desc" ] && description=${desc:0:60} # Limit description length
+            [ -n "$desc" ] && description=${desc:0:60}
         fi
         script_descriptions[$script_basename]=$description
 
-        printf '%s\n' "$script_basename" "\"$description\"" "off" >>"$tempfile"
+        printf '%s\n' "$script_basename" "\"$description\"" "off" >>"$TEMP_FILE"
         ((script_num++))
     done < <(find "$scripts_dir" -type f -name "*" -print0)
 
@@ -174,8 +172,8 @@ select_scripts() {
         --backtitle "Llama Script Manager Installer v${VERSION}" \
         --checklist "Select scripts to install (use SPACE to select/unselect):" \
         $height 100 $((height - 8)) \
-        --file "$tempfile" \
-        2>"$descfile"
+        --file "$TEMP_FILE" \
+        2>"$DESC_FILE"
 
     local dialog_status=$?
 
@@ -190,7 +188,7 @@ select_scripts() {
         while IFS= read -r selected; do
             selected=${selected//\"/}
             [ -n "$selected" ] && selected_scripts[$selected]=1
-        done < <(tr ' ' '\n' <"$descfile" | grep -v '^$')
+        done < <(tr ' ' '\n' <"$DESC_FILE" | grep -v '^$')
 
         # Show selected scripts
         clear
