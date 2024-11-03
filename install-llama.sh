@@ -20,7 +20,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="2.0.15"
+VERSION="2.1.0"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -31,10 +31,73 @@ DEBUG=true # Set to true to enable debug output
 # Configuration
 GITHUB_USER="BrunoAFK"
 GITHUB_REPO="LSM"
-GITHUB_BRANCH="dev"
 INSTALL_DIR="/usr/local/lib/llama"
 BIN_DIR="/usr/local/bin"
 REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
+
+# Function to detect current branch
+detect_github_branch() {
+    debug_log "Detecting GitHub branch"
+    
+    # First try to get branch from git command if we're in a git repo
+    if git rev-parse --git-dir > /dev/null 2>&1; then
+        local branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+        if [ -n "$branch" ]; then
+            debug_log "Detected branch from local git: $branch"
+            GITHUB_BRANCH="$branch"
+            return 0
+        fi
+    fi
+
+    # If not in git repo or git command failed, try to detect from GitHub API
+    debug_log "Attempting to detect default branch from GitHub API"
+    local api_url="https://api.github.com/repos/$GITHUB_USER/$GITHUB_REPO"
+    local default_branch=$(curl -s "$api_url" | grep -o '"default_branch": *"[^"]*"' | cut -d'"' -f4)
+    
+    if [ -n "$default_branch" ]; then
+        debug_log "Detected default branch from GitHub API: $default_branch"
+        GITHUB_BRANCH="$default_branch"
+        return 0
+    fi
+
+    # Fallback to 'main' or 'master' if detection fails
+    debug_log "Branch detection failed, trying to verify 'main' or 'master'"
+    for branch in "main" "master" "dev"; do
+        if curl -s -f "https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/$branch/README.md" > /dev/null; then
+            debug_log "Found existing branch: $branch"
+            GITHUB_BRANCH="$branch"
+            return 0
+        fi
+    done
+
+    # If all detection methods fail, use default
+    debug_log "Branch detection failed, using default: dev"
+    GITHUB_BRANCH="dev"
+    return 1
+}
+
+# Add branch detection to check_repository function
+check_repository() {
+    print_section_header "Checking Repository"
+    if ! curl --output /dev/null --silent --head --fail "https://github.com/$GITHUB_USER/$GITHUB_REPO"; then
+        echo -e "${RED}Error: Repository $REPO_URL is not accessible${NC}"
+        echo "Please check:"
+        echo "  1. Repository exists and is public"
+        echo "  2. Your internet connection"
+        echo "  3. GitHub is accessible"
+        exit 1
+    fi
+
+    # Detect and verify branch
+    detect_github_branch
+    debug_log "Using GitHub branch: $GITHUB_BRANCH"
+    
+    # Verify branch exists and is accessible
+    if ! curl --output /dev/null --silent --head --fail "https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/$GITHUB_BRANCH/README.md"; then
+        echo -e "${RED}Error: Branch '$GITHUB_BRANCH' is not accessible${NC}"
+        exit 1
+    fi
+}
 
 #------------------------------------------------------------------------------
 # Error Management
@@ -262,19 +325,6 @@ ensure_requirements() {
 #------------------------------------------------------------------------------
 # Repository Management
 #------------------------------------------------------------------------------
-# Validates repository accessibility before installation
-check_repository() {
-    print_section_header "Checking Repository"
-    if ! curl --output /dev/null --silent --head --fail "https://github.com/$GITHUB_USER/$GITHUB_REPO"; then
-        echo -e "${RED}Error: Repository $REPO_URL is not accessible${NC}"
-        echo "Please check:"
-        echo "  1. Repository exists and is public"
-        echo "  2. Your internet connection"
-        echo "  3. GitHub is accessible"
-        exit 1
-    fi
-}
-
 # Creates and configures temporary working directory
 setup_temp_dir() {
     print_section_header "Setting up Temporary Directory"

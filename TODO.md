@@ -1,0 +1,3 @@
+- detekcija koji file treba downloadati u odnosu na evn
+- koristiti novi script_list to detect the update
+- generate market script and install that by deafult
