@@ -505,7 +505,7 @@ select_scripts() {
     featured_count=$((featured_count / 3))
     debug_log "Found $featured_count featured scripts"
 
-    if [ $featured_count -gt 0 ]; {
+    if [ $featured_count -gt 0 ]; 
         local height=$((featured_count + 10))
         [[ $height -gt 40 ]] && height=40
 
