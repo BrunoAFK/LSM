@@ -140,43 +140,6 @@ check_platform() {
     esac
 }
 
-verify_dialog() {
-    print_section_header "Dialog Verification"
-    debug_log "Verifying dialog installation"
-
-    if ! command -v dialog >/dev/null 2>&1; then
-        debug_log "Dialog not found, attempting installation"
-        install_package dialog
-    fi
-
-    # Verify dialog works
-    if ! dialog status >/dev/null 2>&1; then
-        debug_log "Dialog installation verification failed"
-        echo -e "${RED}Error: Dialog installation failed${NC}"
-        exit 1
-    fi
-
-    debug_log "Dialog verification successful"
-}
-
-verify_selections() {
-    print_section_header "Selection Verification"
-    debug_log "Verifying script selections..."
-
-    if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
-        debug_log "No scripts selected"
-        return 1
-    fi
-
-    echo -e "${BLUE}Selected scripts:${NC}"
-    for script in "${!SELECTED_SCRIPTS[@]}"; do
-        debug_log "Selected: $script (value: ${SELECTED_SCRIPTS[$script]})"
-        echo -e "${GREEN}- $script${NC}"
-    done
-
-    return 0
-}
-
 #------------------------------------------------------------------------------
 # Package Management
 #------------------------------------------------------------------------------
@@ -235,7 +198,7 @@ install_package() {
 # Verifies and installs all required system dependencies
 ensure_requirements() {
     print_section_header "Checking and Installing Requirements"
-    local required_packages=(jq dialog)
+    local required_packages=(jq dialog git curl)
     local missing_packages=()
     local all_installed=true
 
@@ -252,9 +215,6 @@ ensure_requirements() {
             exit 1
         fi
     done
-
-    # Verify dialog specifically
-    verify_dialog
 
     # Check for other required packages
     for package in "${required_packages[@]}"; do
@@ -283,8 +243,17 @@ ensure_requirements() {
             echo "  For Fedora: sudo dnf install $package"
             exit 1
         fi
+
+        # Specific verification for dialog
+        if [ "$package" = "dialog" ] && ! dialog --version >/dev/null 2>&1; then
+            debug_log "Dialog installation verification failed"
+            echo -e "${RED}Error: Dialog installation failed${NC}"
+            exit 1
+        fi
+
         echo -e "${GREEN}Successfully installed $package${NC}"
     done
+
     sleep 2
     debug_log "All required packages are now installed"
     return 0
@@ -336,206 +305,33 @@ create_directories() {
 #------------------------------------------------------------------------------
 # Script Selection Interface
 #------------------------------------------------------------------------------
+sync_selections() {
+    local dialog_list="$1"
+    local output_file=$(mktemp)
+
+    while IFS= read -r line; do
+        if [ $((++count % 3)) -eq 1 ]; then
+            name=$line
+        elif [ $((count % 3)) -eq 2 ]; then
+            desc=$line
+        else
+            if [ "${SELECTED_SCRIPTS[$name]+_}" ]; then
+                echo "$name"
+                echo "$desc"
+                echo "on"
+            else
+                echo "$name"
+                echo "$desc"
+                echo "off"
+            fi
+        fi
+    done <"$dialog_list" >"$output_file"
+
+    mv "$output_file" "$dialog_list"
+}
 # Provides interactive UI for script selection
 # Supports featured scripts, search, and bulk installation
-select_scriptsB() {
-    print_section_header "Script Selection"
-    local scripts_dir="$TEMP_DIR/repo/scripts"
-    debug_log "Starting select_scripts function"
-    debug_log "Scripts directory: $scripts_dir"
-
-    # Create temporary files
-    local SCRIPT_LIST_FILE=$(mktemp)
-    local FEATURED_LIST_FILE=$(mktemp)
-    local ALL_LIST_FILE=$(mktemp)
-    local FILTERED_LIST_FILE=$(mktemp)
-
-    # Download and parse script_list.json
-    debug_log "Downloading script_list.json"
-    local json_url="https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/$GITHUB_BRANCH/script_list.json"
-    debug_log "Attempting to download from: $json_url"
-
-    local json_content=$(curl -sS -w "\nHTTP_CODE:%{http_code}" "$json_url")
-    local http_code=$(echo "$json_content" | grep "HTTP_CODE:" | cut -d":" -f2)
-    json_content=$(echo "$json_content" | grep -v "HTTP_CODE:")
-
-    # Validate download and JSON
-    if [ "$http_code" != "200" ] || ! echo "$json_content" | jq '.' >/dev/null 2>&1; then
-        debug_log "ERROR: Failed to download or parse script_list.json"
-        echo -e "${RED}Error: Failed to get script list${NC}"
-        return 1
-    fi
-
-    echo "$json_content" >"$SCRIPT_LIST_FILE"
-
-    # Prepare lists
-    jq -r '.scripts[] | select(.rank | contains("Featured")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" >"$FEATURED_LIST_FILE"
-    jq -r '.scripts[] | select(.path | contains("./scripts/")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" >"$ALL_LIST_FILE"
-
-    # First dialog: Choose installation mode
-    dialog --title "Installation Mode" \
-        --backtitle "Llama Script Manager Installer v${VERSION}" \
-        --yes-label "Install All" \
-        --no-label "Custom Selection" \
-        --yesno "\nChoose installation mode:\n\nInstall All: Install all available scripts\nCustom Selection: Choose which scripts to install" \
-        12 60
-
-    local mode_choice=$?
-    debug_log "Installation mode choice: $mode_choice"
-
-    case $mode_choice in
-    0) # Install All
-        debug_log "Installing all scripts"
-        local count=0
-        while IFS= read -r line; do
-            if [ $((++count % 3)) -eq 1 ]; then
-                SELECTED_SCRIPTS["$line"]=1
-                debug_log "Adding all script: $line"
-            fi
-        done <"$ALL_LIST_FILE"
-        return 0
-        ;;
-    1) # Custom Selection
-        # Continue to featured scripts
-        ;;
-    *) # Cancel
-        debug_log "Installation cancelled"
-        return 1
-        ;;
-    esac
-
-    # Function to filter scripts based on search term
-    filter_scripts() {
-        local search_term="$1"
-        local source_file="$2"
-        local target_file="$3"
-
-        debug_log "Filtering scripts with search term: $search_term"
-        if [ -z "$search_term" ]; then
-            cp "$source_file" "$target_file"
-        else
-            awk -v search="${search_term,,}" '
-            {
-                if (NR % 3 == 1) script=$0;
-                if (NR % 3 == 2) desc=$0;
-                if (NR % 3 == 0) {
-                    if (tolower(script) ~ search || tolower(desc) ~ search) {
-                        print prev2; print prev1; print $0;
-                    }
-                }
-                prev2=script;
-                prev1=desc;
-            }' "$source_file" >"$target_file"
-        fi
-    }
-
-    # Show Featured Scripts
-    local featured_count=$(wc -l <"$FEATURED_LIST_FILE")
-    featured_count=$((featured_count / 3))
-    debug_log "Found $featured_count featured scripts"
-
-    if [ $featured_count -gt 0 ]; then
-        local height=$((featured_count + 10))
-        [[ $height -gt 40 ]] && height=40
-
-        dialog --title "Featured Scripts" \
-            --backtitle "Llama Script Manager Installer v${VERSION}" \
-            --no-ok \
-            --extra-button --extra-label "Next" \
-            --colors \
-            --checklist "\Zn\Z3Featured Scripts\Zn (use SPACE to select/unselect):" \
-            $height 100 $((height - 8)) \
-            --file "$FEATURED_LIST_FILE" \
-            2>"$DESC_FILE"
-
-        local featured_status=$?
-        debug_log "Featured dialog status: $featured_status"
-
-        # Process featured selections if any
-        if [ -s "$DESC_FILE" ]; then
-            while IFS= read -r selected; do
-                selected=${selected//\"/}
-                if [ -n "$selected" ]; then
-                    SELECTED_SCRIPTS[$selected]=1
-                    debug_log "Selected featured script: $selected"
-                fi
-            done <"$DESC_FILE"
-        fi
-
-        if [ $featured_status -ne 3 ]; then
-            debug_log "Featured selection cancelled"
-            return 1
-        fi
-    fi
-
-    # Market Loop
-    local current_list="$ALL_LIST_FILE"
-    while true; do
-        dialog --title "Script Market" \
-            --backtitle "Llama Script Manager Installer v${VERSION}" \
-            --ok-label "Install Selected" \
-            --cancel-label "Exit" \
-            --help-button --help-label "Search" \
-            --colors \
-            --checklist "\Zn\Z2Available Scripts\Zn (use SPACE to select/unselect):" \
-            40 100 32 \
-            --file "$current_list" \
-            2>"$DESC_FILE"
-
-        local market_status=$?
-        debug_log "Market dialog status: $market_status"
-
-        case $market_status in
-        0)
-            debug_log "Processing final selections"
-            while IFS= read -r selected; do
-                selected=${selected//\"/}
-                if [ -n "$selected" ]; then
-                    SELECTED_SCRIPTS[$selected]=1
-                    debug_log "Added to selection: $selected"
-                fi
-            done <"$DESC_FILE"
-            debug_log "Final selections: ${!SELECTED_SCRIPTS[*]}"
-            return 0
-            ;;
-        2)
-            debug_log "Search requested"
-            local search_term=$(dialog --title "Search Scripts" \
-                --backtitle "Llama Script Manager Installer v${VERSION}" \
-                --inputbox "Enter search term (leave empty to show all):" \
-                8 60 \
-                2>"$DESC_FILE")
-
-            local search_status=$?
-            debug_log "Search dialog status: $search_status"
-
-            if [ $search_status -eq 0 ]; then
-                search_term=$(cat "$DESC_FILE")
-                debug_log "Searching for: '$search_term'"
-                if [ -z "$search_term" ]; then
-                    current_list="$ALL_LIST_FILE"
-                else
-                    filter_scripts "$search_term" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
-                    current_list="$FILTERED_LIST_FILE"
-                fi
-            fi
-            continue
-            ;;
-        *)
-            debug_log "Market selection cancelled"
-            if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
-                return 1
-            fi
-            return 0
-            ;;
-        esac
-    done
-
-    # Clean up temporary files
-    rm -f "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
-}
-
-select_scripts() {
+select_scriptsb() {
     print_section_header "Script Selection"
     local scripts_dir="$TEMP_DIR/repo/scripts"
     debug_log "Starting select_scripts function"
@@ -789,6 +585,260 @@ select_scripts() {
     fi
 
     # At the end of select_scripts function
+    if [ ${#SELECTED_SCRIPTS[@]} -gt 0 ]; then
+        debug_log "Installation will proceed with selected scripts"
+        return 0
+    else
+        debug_log "No scripts selected for installation"
+        return 1
+    fi
+}
+
+select_scripts() {
+    print_section_header "Script Selection"
+    local scripts_dir="$TEMP_DIR/repo/scripts"
+    debug_log "Starting select_scripts function"
+    debug_log "Scripts directory: $scripts_dir"
+
+    # Create temporary files
+    local SCRIPT_LIST_FILE=$(mktemp)
+    local FEATURED_LIST_FILE=$(mktemp)
+    local ALL_LIST_FILE=$(mktemp)
+    local FILTERED_LIST_FILE=$(mktemp)
+    local CURRENT_SELECTIONS=$(mktemp)
+
+    # Download and parse script_list.json
+    debug_log "Downloading script_list.json"
+    local json_url="https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/$GITHUB_BRANCH/script_list.json"
+    debug_log "Attempting to download from: $json_url"
+
+    local json_content=$(curl -sS -w "\nHTTP_CODE:%{http_code}" "$json_url")
+    local http_code=$(echo "$json_content" | grep "HTTP_CODE:" | cut -d":" -f2)
+    json_content=$(echo "$json_content" | grep -v "HTTP_CODE:")
+
+    # Validate download and JSON
+    if [ "$http_code" != "200" ] || ! echo "$json_content" | jq '.' >/dev/null 2>&1; then
+        debug_log "ERROR: Failed to download or parse script_list.json"
+        echo -e "${RED}Error: Failed to get script list${NC}"
+        return 1
+    fi
+
+    echo "$json_content" >"$SCRIPT_LIST_FILE"
+
+    # Prepare lists
+    jq -r '.scripts[] | select(.rank | contains("Featured")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" >"$FEATURED_LIST_FILE"
+    jq -r '.scripts[] | select(.path | contains("./scripts/")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" >"$ALL_LIST_FILE"
+
+    # Function to mark previously selected scripts
+    mark_selections() {
+        local input_file="$1"
+        local output_file=$(mktemp)
+        local count=0
+
+        while IFS= read -r line; do
+            ((count++))
+            if [ $((count % 3)) -eq 1 ]; then
+                # Check if script is in SELECTED_SCRIPTS
+                if [ "${SELECTED_SCRIPTS[$line]+_}" ]; then
+                    echo "$line"
+                    read -r desc
+                    echo "$desc"
+                    echo "on"
+                    continue
+                fi
+            fi
+            echo "$line"
+        done <"$input_file" >"$output_file"
+
+        mv "$output_file" "$input_file"
+    }
+
+    # Function to filter scripts based on search term
+    filter_scripts() {
+        local search_term="$1"
+        local source_file="$2"
+        local target_file="$3"
+
+        debug_log "Filtering scripts with search term: $search_term"
+        if [ -z "$search_term" ]; then
+            cp "$source_file" "$target_file"
+        else
+            awk -v search="${search_term,,}" '
+            {
+                if (NR % 3 == 1) script=$0;
+                if (NR % 3 == 2) desc=$0;
+                if (NR % 3 == 0) {
+                    if (tolower(script) ~ search || tolower(desc) ~ search) {
+                        print prev2; print prev1; print $0;
+                    }
+                }
+                prev2=script;
+                prev1=desc;
+            }' "$source_file" >"$target_file"
+        fi
+    }
+
+    # First dialog: Choose installation mode
+    dialog --title "Installation Mode" \
+        --backtitle "Llama Script Manager Installer v${VERSION}" \
+        --yes-label "Install All" \
+        --no-label "Custom Selection" \
+        --yesno "\nChoose installation mode:\n\nInstall All: Install all available scripts\nCustom Selection: Choose which scripts to install" \
+        12 60
+
+    local mode_choice=$?
+    debug_log "Installation mode choice: $mode_choice"
+
+    case $mode_choice in
+    0) # Install All
+        debug_log "Installing all scripts"
+        local count=0
+        while IFS= read -r line; do
+            if [ $((++count % 3)) -eq 1 ]; then
+                SELECTED_SCRIPTS["$line"]=1
+                debug_log "Adding all script: $line"
+            fi
+        done <"$ALL_LIST_FILE"
+        return 0
+        ;;
+    1) ;; # Continue with custom selection
+    *)
+        debug_log "Installation cancelled"
+        return 1
+        ;;
+    esac
+
+    # Show Featured Scripts Dialog
+    local featured_selections=()
+    while true; do
+        mark_selections "$FEATURED_LIST_FILE"
+
+        dialog --title "Featured Scripts" \
+            --backtitle "Llama Script Manager Installer v${VERSION}" \
+            --ok-label "Next" \
+            --cancel-label "Skip" \
+            --colors \
+            --checklist "\Zn\Z3Featured Scripts\Zn (use SPACE to select/unselect):" \
+            $DIALOG_HEIGHT $DIALOG_WIDTH $((DIALOG_HEIGHT - 8)) \
+            --file "$FEATURED_LIST_FILE" \
+            2>"$CURRENT_SELECTIONS"
+
+        local featured_status=$?
+        debug_log "Featured dialog status: $featured_status"
+
+        # Process featured selections
+        if [ -s "$CURRENT_SELECTIONS" ]; then
+            eval "featured_selections=($(cat "$CURRENT_SELECTIONS"))"
+            for selected in "${featured_selections[@]}"; do
+                selected=${selected//\"/}
+                if [ -n "$selected" ]; then
+                    SELECTED_SCRIPTS[$selected]=1
+                    debug_log "Selected featured script: $selected"
+                fi
+            done
+        fi
+
+        break
+    done
+
+    # Exit if ESC was pressed in featured dialog
+    if [ "$featured_status" -eq 255 ]; then
+        debug_log "Featured scripts dialog cancelled with ESC"
+        return 1
+    fi
+
+    # Always show market dialog unless ESC was pressed
+    if [ "$featured_status" -ne 255 ]; then
+        # All Scripts Dialog with Search
+        current_list="$ALL_LIST_FILE"
+        search_active=false
+        last_search=""
+
+        # Mark any featured selections in the market dialog
+        debug_log "Marking previously selected scripts in market dialog"
+        mark_selections "$current_list"
+
+        while true; do
+            debug_log "Showing all scripts dialog with current_list: $current_list"
+
+            dialog --title "Script Market" \
+                --backtitle "Llama Script Manager Installer v${VERSION}" \
+                --ok-label "Install Selected" \
+                --cancel-label "Exit" \
+                --help-button --help-label "Search" \
+                --extra-button --extra-label "Show All" \
+                --colors \
+                --checklist "\Zn\Z2Available Scripts\Zn (use SPACE to select/unselect):\n\Z3Current filter: ${last_search:-none}\Zn" \
+                $DIALOG_HEIGHT $DIALOG_WIDTH $((DIALOG_HEIGHT - 8)) \
+                --file "$current_list" \
+                2>"$CURRENT_SELECTIONS"
+
+            local market_status=$?
+            debug_log "Market dialog status: $market_status"
+
+            case $market_status in
+            0) # Install Selected
+                debug_log "Processing final selections from all scripts dialog"
+                # Clear all previous selections since market dialog is final
+                SELECTED_SCRIPTS=()
+                if [ -s "$CURRENT_SELECTIONS" ]; then
+                    eval "selected_array=($(cat "$CURRENT_SELECTIONS"))"
+                    for selected in "${selected_array[@]}"; do
+                        selected=${selected//\"/}
+                        if [ -n "$selected" ]; then
+                            SELECTED_SCRIPTS[$selected]=1
+                            debug_log "Added to final selection: $selected"
+                        fi
+                    done
+                fi
+                debug_log "Final selection complete, returning with success"
+                return 0
+                ;;
+            1 | 255) # Exit or ESC
+                debug_log "Exit selected or ESC pressed"
+                return 1
+                ;;
+            2) # Search
+                debug_log "Search button pressed"
+                local search_term=$(dialog --title "Search Scripts" \
+                    --backtitle "Llama Script Manager Installer v${VERSION}" \
+                    --inputbox "Enter search term (leave empty to show all):" \
+                    8 60 \
+                    2>&1)
+
+                local search_status=$?
+                debug_log "Search dialog status: $search_status"
+
+                if [ $search_status -eq 0 ]; then
+                    if [ -n "$search_term" ]; then
+                        debug_log "Searching for: '$search_term'"
+                        filter_scripts "$search_term" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
+                        current_list="$FILTERED_LIST_FILE"
+                        search_active=true
+                        last_search="$search_term"
+                    else
+                        debug_log "Empty search term, showing all scripts"
+                        current_list="$ALL_LIST_FILE"
+                        search_active=false
+                        last_search=""
+                    fi
+                fi
+                # Re-mark selections after search
+                mark_selections "$current_list"
+                ;;
+            3) # Show All
+                debug_log "Show All button pressed"
+                current_list="$ALL_LIST_FILE"
+                search_active=false
+                last_search=""
+                # Re-mark selections after showing all
+                mark_selections "$current_list"
+                ;;
+            esac
+        done
+    fi
+
+    # Final check for selected scripts
     if [ ${#SELECTED_SCRIPTS[@]} -gt 0 ]; then
         debug_log "Installation will proceed with selected scripts"
         return 0
