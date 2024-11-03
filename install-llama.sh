@@ -31,19 +31,6 @@ DEBUG=true # Set to true to enable debug output
 #------------------------------------------------------------------------------
 # Core Error Handling Functions
 #------------------------------------------------------------------------------
-handle_error() {
-    local exit_code=$1
-    local line_number=$2
-
-    # Call cleanup before handling the error
-    cleanup_temp_files
-
-    echo -e "${RED}Installation failed at line $line_number with exit code $exit_code${NC}" >&2
-    if [ "$DEBUG" = true ]; then
-        echo -e "${BLUE}Debug log is available at: /tmp/lsm_install_debug.log${NC}" >&2
-    fi
-    exit 1
-}
 
 cleanup_temp_files() {
     # Disable error handling during cleanup
@@ -56,28 +43,19 @@ cleanup_temp_files() {
     # Store the original exit code
     local exit_code=$?
 
-    # Remove temporary directory and its contents
-    if [ -d "$TEMP_DIR" ]; then
-        debug_log "Removing temporary directory: $TEMP_DIR"
+    # Only remove the temporary directory we created
+    if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
+        debug_log "Removing specific temporary directory: $TEMP_DIR"
         rm -rf "$TEMP_DIR" 2>/dev/null || {
             debug_log "Failed to remove directory: $TEMP_DIR"
             sudo rm -rf "$TEMP_DIR" 2>/dev/null
         }
     fi
 
-    # Clean up all temp files created during this session
-    for tmp_file in $(find /tmp -maxdepth 1 -name "tmp.*" -user $(id -u) -mmin -5); do
-        debug_log "Cleaning up temporary file: $tmp_file"
-        rm -f "$tmp_file" 2>/dev/null || {
-            debug_log "Failed to remove file: $tmp_file"
-            sudo rm -f "$tmp_file" 2>/dev/null
-        }
-    done
-
-    # Remove specific temporary files
+    # Only remove specific temp files we created
     for file in "$TEMP_FILE" "$DESC_FILE" "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"; do
-        if [ -f "$file" ]; then
-            debug_log "Removing temporary file: $file"
+        if [ -n "$file" ] && [ -f "$file" ]; then
+            debug_log "Removing specific temporary file: $file"
             rm -f "$file" 2>/dev/null || {
                 debug_log "Failed to remove file: $file"
                 sudo rm -f "$file" 2>/dev/null
@@ -85,20 +63,27 @@ cleanup_temp_files() {
         fi
     done
 
-    # Remove debug log if DEBUG is true
-    if [ "$DEBUG" = true ] && [ -f "/tmp/dialog_debug.log" ]; then
-        debug_log "Removing dialog debug log"
-        rm -f "/tmp/dialog_debug.log" 2>/dev/null || sudo rm -f "/tmp/dialog_debug.log"
-    fi
-
     debug_log "Cleanup completed"
 
     # Re-enable error handling
     set -e
     trap 'handle_error $? $LINENO' ERR
 
-    # Return the original exit code
     return $exit_code
+}
+
+handle_error() {
+    local exit_code=$1
+    local line_number=$2
+
+    # Call cleanup before handling the error
+    cleanup_temp_files
+
+    echo -e "${RED}Installation failed at line $line_number with exit code $exit_code${NC}" >&2
+    if [ "$DEBUG" = true ]; then
+        echo -e "${BLUE}Debug log is available at: /tmp/lsm_install_debug.log${NC}" >&2
+    fi
+    exit 1
 }
 
 # Update trap setup
@@ -438,7 +423,7 @@ select_scripts() {
     fi
 
     echo "$json_content" >"$SCRIPT_LIST_FILE"
-    
+
     # Prepare lists
     jq -r '.scripts[] | select(.rank | contains("Featured")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" >"$FEATURED_LIST_FILE"
     jq -r '.scripts[] | select(.path | contains("./scripts/")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" >"$ALL_LIST_FILE"
@@ -455,24 +440,24 @@ select_scripts() {
     debug_log "Installation mode choice: $mode_choice"
 
     case $mode_choice in
-        0) # Install All
-            debug_log "Installing all scripts"
-            local count=0
-            while IFS= read -r line; do
-                if [ $((++count % 3)) -eq 1 ]; then
-                    SELECTED_SCRIPTS["$line"]=1
-                    debug_log "Adding all script: $line"
-                fi
-            done <"$ALL_LIST_FILE"
-            return 0
-            ;;
-        1) # Custom Selection
-            # Continue to featured scripts
-            ;;
-        *) # Cancel
-            debug_log "Installation cancelled"
-            return 1
-            ;;
+    0) # Install All
+        debug_log "Installing all scripts"
+        local count=0
+        while IFS= read -r line; do
+            if [ $((++count % 3)) -eq 1 ]; then
+                SELECTED_SCRIPTS["$line"]=1
+                debug_log "Adding all script: $line"
+            fi
+        done <"$ALL_LIST_FILE"
+        return 0
+        ;;
+    1) # Custom Selection
+        # Continue to featured scripts
+        ;;
+    *) # Cancel
+        debug_log "Installation cancelled"
+        return 1
+        ;;
     esac
 
     # Function to filter scripts based on search term
@@ -557,48 +542,48 @@ select_scripts() {
         debug_log "Market dialog status: $market_status"
 
         case $market_status in
-            0) 
-                debug_log "Processing final selections"
-                while IFS= read -r selected; do
-                    selected=${selected//\"/}
-                    if [ -n "$selected" ]; then
-                        SELECTED_SCRIPTS[$selected]=1
-                        debug_log "Added to selection: $selected"
-                    fi
-                done <"$DESC_FILE"
-                debug_log "Final selections: ${!SELECTED_SCRIPTS[*]}"
-                return 0
-                ;;
-            2) 
-                debug_log "Search requested"
-                local search_term=$(dialog --title "Search Scripts" \
-                    --backtitle "Llama Script Manager Installer v${VERSION}" \
-                    --inputbox "Enter search term (leave empty to show all):" \
-                    8 60 \
-                    2>"$DESC_FILE")
-                
-                local search_status=$?
-                debug_log "Search dialog status: $search_status"
-                
-                if [ $search_status -eq 0 ]; then
-                    search_term=$(cat "$DESC_FILE")
-                    debug_log "Searching for: '$search_term'"
-                    if [ -z "$search_term" ]; then
-                        current_list="$ALL_LIST_FILE"
-                    else
-                        filter_scripts "$search_term" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
-                        current_list="$FILTERED_LIST_FILE"
-                    fi
+        0)
+            debug_log "Processing final selections"
+            while IFS= read -r selected; do
+                selected=${selected//\"/}
+                if [ -n "$selected" ]; then
+                    SELECTED_SCRIPTS[$selected]=1
+                    debug_log "Added to selection: $selected"
                 fi
-                continue
-                ;;
-            *) 
-                debug_log "Market selection cancelled"
-                if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
-                    return 1
+            done <"$DESC_FILE"
+            debug_log "Final selections: ${!SELECTED_SCRIPTS[*]}"
+            return 0
+            ;;
+        2)
+            debug_log "Search requested"
+            local search_term=$(dialog --title "Search Scripts" \
+                --backtitle "Llama Script Manager Installer v${VERSION}" \
+                --inputbox "Enter search term (leave empty to show all):" \
+                8 60 \
+                2>"$DESC_FILE")
+
+            local search_status=$?
+            debug_log "Search dialog status: $search_status"
+
+            if [ $search_status -eq 0 ]; then
+                search_term=$(cat "$DESC_FILE")
+                debug_log "Searching for: '$search_term'"
+                if [ -z "$search_term" ]; then
+                    current_list="$ALL_LIST_FILE"
+                else
+                    filter_scripts "$search_term" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
+                    current_list="$FILTERED_LIST_FILE"
                 fi
-                return 0
-                ;;
+            fi
+            continue
+            ;;
+        *)
+            debug_log "Market selection cancelled"
+            if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
+                return 1
+            fi
+            return 0
+            ;;
         esac
     done
 
@@ -645,7 +630,7 @@ copy_files() {
     debug_log "Source path: $TEMP_DIR/repo/llama"
     debug_log "Target path: $INSTALL_DIR/llama"
     debug_log "Main script exists: $([ -f "$TEMP_DIR/repo/llama" ] && echo "Yes" || echo "No")"
-    
+
     if [ ! -f "$TEMP_DIR/repo/llama" ]; then
         debug_log "ERROR: Main script not found at $TEMP_DIR/repo/llama"
         debug_log "Directory contents: $(ls -la $TEMP_DIR/repo)"
@@ -659,7 +644,7 @@ copy_files() {
         echo -e "${RED}Error: Failed to copy main script${NC}"
         exit 1
     fi
-    
+
     sudo chmod +x "$INSTALL_DIR/llama"
     debug_log "Main script permissions after chmod: $(ls -la $INSTALL_DIR/llama)"
 
@@ -681,17 +666,17 @@ copy_files() {
     for script_name in "${!SELECTED_SCRIPTS[@]}"; do
         debug_log "========================================="
         debug_log "Processing script: $script_name"
-        
+
         local script_path="$TEMP_DIR/repo/scripts/$script_name"
         local target_path="$INSTALL_DIR/scripts/$script_name"
-        
+
         debug_log "Source path: $script_path"
         debug_log "Target path: $target_path"
         debug_log "Source exists: $([ -f "$script_path" ] && echo "Yes" || echo "No")"
         if [ -f "$script_path" ]; then
             debug_log "Source file permissions: $(ls -la $script_path)"
         fi
-        
+
         # Verify source file exists
         if [ ! -f "$script_path" ]; then
             debug_log "ERROR: Source file not found: $script_path"
@@ -701,7 +686,7 @@ copy_files() {
         fi
 
         echo -e "${GREEN}Installing: $script_name${NC}"
-        
+
         # Copy with explicit error checking
         debug_log "Attempting to copy file..."
         if ! sudo cp "$script_path" "$target_path"; then
@@ -712,10 +697,10 @@ copy_files() {
             echo -e "${RED}Error: Failed to copy $script_name${NC}"
             continue
         fi
-        
+
         debug_log "File copied successfully"
         debug_log "Target file exists: $([ -f "$target_path" ] && echo "Yes" || echo "No")"
-        
+
         # Set permissions with error checking
         debug_log "Setting executable permissions..."
         if ! sudo chmod +x "$target_path"; then
@@ -724,7 +709,7 @@ copy_files() {
             echo -e "${RED}Error: Failed to set permissions for $script_name${NC}"
             continue
         fi
-        
+
         debug_log "Permissions set successfully"
         debug_log "Final file permissions: $(ls -la $target_path)"
         debug_log "Successfully installed $script_name"
@@ -736,10 +721,10 @@ copy_files() {
     debug_log "Verifying installation..."
     debug_log "Install directory contents after: $(ls -la $INSTALL_DIR)"
     debug_log "Scripts directory contents after: $(ls -la $INSTALL_DIR/scripts)"
-    
+
     local installed_count=$(ls -1 "$INSTALL_DIR/scripts" 2>/dev/null | wc -l)
     debug_log "Number of installed scripts: $installed_count"
-    
+
     if [ $installed_count -eq 0 ]; then
         debug_log "ERROR: No scripts found in installation directory"
         echo -e "${RED}Error: Installation verification failed${NC}"
@@ -755,7 +740,6 @@ copy_files() {
     echo -e "${GREEN}Successfully installed ${installed_count} scripts${NC}"
     return 0
 }
-
 
 create_symlink() {
     print_section_header "Creating Symlink"
@@ -817,6 +801,27 @@ main() {
 
     debug_log "Cleaning up dialog"
     cleanup_dialog
+
+    # Add verification after cleanup
+    debug_log "Performing final verification"
+    if [ ! -f "$INSTALL_DIR/llama" ]; then
+        debug_log "ERROR: Main script missing after installation"
+        echo -e "${RED}Error: Installation verification failed${NC}"
+        exit 1
+    fi
+
+    # Verify scripts
+    debug_log "Verifying installed scripts"
+    for script_name in "${!SELECTED_SCRIPTS[@]}"; do
+        if [ ! -f "$INSTALL_DIR/scripts/$script_name" ]; then
+            debug_log "ERROR: Script $script_name missing after installation"
+            echo -e "${RED}Error: Script $script_name missing after installation${NC}"
+            exit 1
+        fi
+        debug_log "Verified script: $script_name"
+    done
+
+    debug_log "All scripts verified after cleanup"
 
     echo -e "${GREEN}Installation completed successfully!${NC}"
     echo -e "Run ${YELLOW}llama help${NC} to get started."
