@@ -670,10 +670,10 @@ select_scripts() {
                 debug_log "Exit selected or ESC pressed"
                 if [ ${#SELECTED_SCRIPTS[@]} -gt 0 ]; then
                     debug_log "Returning with existing selections"
-                    break
+                    exit 1
                 else
                     debug_log "No selections made, returning with failure"
-                    return 1
+                    exit 1
                 fi
                 ;;
         esac
