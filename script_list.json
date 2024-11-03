@@ -1,5 +1,5 @@
 {
-  "generated_date": "2024-11-03 08:58:14",
+  "generated_date": "2024-11-03 07:59:59",
   "scripts": [
     {
       "name": "install-llama.sh",
@@ -14,6 +14,12 @@
       "description": "Enhanced script manager with development and production environment support"
     },
     {
+      "name": "pocketFeed",
+      "path": "./scripts/pocketFeed",
+      "rank": "Featured",
+      "description": "This script extracts URLs from a given RSS/Atom feed and adds them to ArchiveBox."
+    },
+    {
       "name": "test",
       "path": "./scripts/test",
       "rank": "Unranked",
@@ -24,12 +30,6 @@
       "path": "./scripts/docker-update",
       "rank": "Featured",
       "description": "This script runs Watchtower to update Docker containers, cleans up unused Docker resources, and manages a .env file for configuration."
-    },
-    {
-      "name": "pocketFeed",
-      "path": "./scripts/pocketFeed",
-      "rank": "Featured",
-      "description": "This script extracts URLs from a given RSS/Atom feed and adds them to ArchiveBox."
     }
   ]
 }
