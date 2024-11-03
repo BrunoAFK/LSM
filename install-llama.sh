@@ -665,7 +665,7 @@ select_scripts() {
         local featured_status=$?
         debug_log "Featured dialog status: $featured_status"
 
-        case $featured_status in
+        case $FEATURED_LIST_FILE in
             1 | 255) # Exit or ESC
                 debug_log "Exit .................."
                 exit 1
