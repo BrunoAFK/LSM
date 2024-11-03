@@ -748,7 +748,7 @@ select_scripts() {
     fi
 
     # Always show market dialog unless ESC was pressed
-    if [ "$featured_status" -ne 255 ]; then
+    if [ "$featured_status" -eq 0 ]; then
         # All Scripts Dialog with Search
         current_list="$ALL_LIST_FILE"
         search_active=false
