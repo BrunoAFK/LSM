@@ -348,6 +348,41 @@ process_selections() {
     fi
 }
 
+update_dialog_list() {
+    local input_file="$1"
+    local output_file=$(mktemp)
+    local count=0
+    local name=""
+    local desc=""
+
+    debug_log "Updating dialog list with current selections: ${!SELECTED_SCRIPTS[*]}"
+
+    while IFS= read -r line; do
+        ((count++))
+        case $((count % 3)) in
+        1)
+            name="$line"
+            echo "$line"
+            ;;
+        2)
+            desc="$line"
+            echo "$line"
+            ;;
+        0)
+            if [[ -n "${SELECTED_SCRIPTS[$name]}" ]]; then
+                debug_log "Marking $name as selected in dialog list"
+                echo "on"
+            else
+                echo "off"
+            fi
+            ;;
+        esac
+    done <"$input_file" >"$output_file"
+
+    mv "$output_file" "$input_file"
+    debug_log "Dialog list updated"
+}
+
 # Provides interactive UI for script selection
 # Supports featured scripts, search, and bulk installation
 
@@ -468,7 +503,7 @@ select_scripts() {
     # Show Featured Scripts Dialog
     local featured_selections=()
     while true; do
-        sync_dialog_selections "$FEATURED_LIST_FILE"
+        debug_log "Showing featured scripts dialog"
 
         dialog --title "Featured Scripts" \
             --backtitle "Llama Script Manager Installer v${VERSION}" \
@@ -482,10 +517,23 @@ select_scripts() {
             2>"$CURRENT_SELECTIONS"
 
         local featured_status=$?
+        debug_log "Featured dialog status: $featured_status"
 
         case $featured_status in
-        0) # Next pressed - proceed to market dialog
-            process_featured_selections "$CURRENT_SELECTIONS"
+        0) # Next pressed
+            # Process current selections
+            if [ -s "$CURRENT_SELECTIONS" ]; then
+                debug_log "Processing featured selections"
+                eval "featured_selections=($(cat "$CURRENT_SELECTIONS"))"
+                for selected in "${featured_selections[@]}"; do
+                    selected=${selected//\"/}
+                    if [ -n "$selected" ]; then
+                        SELECTED_SCRIPTS[$selected]=1
+                        debug_log "Selected featured script: $selected"
+                    fi
+                done
+                debug_log "Current selected scripts after featured dialog: ${!SELECTED_SCRIPTS[*]}"
+            fi
             break
             ;;
         1) # Exit pressed
@@ -512,8 +560,10 @@ select_scripts() {
     mark_selections "$current_list"
 
     while true; do
-        # Store current selections before showing dialog
-        local previous_selections=("${!SELECTED_SCRIPTS[@]}")
+        # Update the dialog list with current selections
+        update_dialog_list "$current_list"
+
+        debug_log "Showing market dialog with current selections: ${!SELECTED_SCRIPTS[*]}"
 
         dialog --title "Script Market" \
             --backtitle "Llama Script Manager Installer v${VERSION}" \
@@ -531,9 +581,22 @@ select_scripts() {
         debug_log "Market dialog status: $market_status"
 
         case $market_status in
-        0) # OK pressed - proceed with installation
-            process_selections
-            return 0
+        0) # Install Selected pressed
+            if [ -s "$CURRENT_SELECTIONS" ]; then
+                debug_log "Processing final selections"
+                # Clear previous selections to avoid duplicates
+                SELECTED_SCRIPTS=()
+                eval "selected_array=($(cat "$CURRENT_SELECTIONS"))"
+                for selected in "${selected_array[@]}"; do
+                    selected=${selected//\"/}
+                    if [ -n "$selected" ]; then
+                        SELECTED_SCRIPTS[$selected]=1
+                        debug_log "Added to final selection: $selected"
+                    fi
+                done
+                debug_log "Final selections: ${!SELECTED_SCRIPTS[*]}"
+                return 0
+            fi
             ;;
         1) # Back pressed - return to featured dialog
             SELECTED_SCRIPTS=()
