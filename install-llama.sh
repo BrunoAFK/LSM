@@ -761,7 +761,7 @@ select_scripts() {
         while true; do
             debug_log "Showing all scripts dialog with current_list: $current_list"
             cat $current_list
-
+            debug_log "$(cat $current_list)"
             dialog --title "Script Market" \
                 --backtitle "Llama Script Manager Installer v${VERSION}" \
                 --ok-label "Install Selected" \
