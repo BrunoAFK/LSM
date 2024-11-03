@@ -135,67 +135,67 @@ check_platform() {
     print_section_header "Platform Check"
     local platform=$(uname)
     debug_log "Detected platform: $platform"
-    
+
     # Global variables for platform-specific settings
     declare -g DIALOG_HEIGHT
     declare -g DIALOG_WIDTH
-    
+
     case "$platform" in
-        Darwin)
-            # macOS-specific adjustments
-            DIALOG_HEIGHT=$(($(tput lines) - 10))
-            DIALOG_WIDTH=$(($(tput cols) - 10))
-            debug_log "Set macOS dialog dimensions: $DIALOG_HEIGHT x $DIALOG_WIDTH"
-            ;;
-        Linux)
-            # Linux-specific adjustments
-            DIALOG_HEIGHT=40
-            DIALOG_WIDTH=100
-            debug_log "Set Linux dialog dimensions: $DIALOG_HEIGHT x $DIALOG_WIDTH"
-            ;;
-        *)
-            debug_log "Unsupported platform: $platform"
-            echo -e "${YELLOW}Warning: Unsupported platform $platform${NC}"
-            DIALOG_HEIGHT=40
-            DIALOG_WIDTH=100
-            ;;
+    Darwin)
+        # macOS-specific adjustments
+        DIALOG_HEIGHT=$(($(tput lines) - 10))
+        DIALOG_WIDTH=$(($(tput cols) - 10))
+        debug_log "Set macOS dialog dimensions: $DIALOG_HEIGHT x $DIALOG_WIDTH"
+        ;;
+    Linux)
+        # Linux-specific adjustments
+        DIALOG_HEIGHT=40
+        DIALOG_WIDTH=100
+        debug_log "Set Linux dialog dimensions: $DIALOG_HEIGHT x $DIALOG_WIDTH"
+        ;;
+    *)
+        debug_log "Unsupported platform: $platform"
+        echo -e "${YELLOW}Warning: Unsupported platform $platform${NC}"
+        DIALOG_HEIGHT=40
+        DIALOG_WIDTH=100
+        ;;
     esac
 }
 
 verify_dialog() {
     print_section_header "Dialog Verification"
     debug_log "Verifying dialog installation"
-    
+
     if ! command -v dialog >/dev/null 2>&1; then
         debug_log "Dialog not found, attempting installation"
         install_package dialog
     fi
-    
+
     # Verify dialog works
     if ! dialog --version >/dev/null 2>&1; then
         debug_log "Dialog installation verification failed"
         echo -e "${RED}Error: Dialog installation failed${NC}"
         exit 1
     fi
-    
+
     debug_log "Dialog verification successful"
 }
 
 verify_selections() {
     print_section_header "Selection Verification"
     debug_log "Verifying script selections..."
-    
+
     if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
         debug_log "No scripts selected"
         return 1
     fi
-    
+
     echo -e "${BLUE}Selected scripts:${NC}"
     for script in "${!SELECTED_SCRIPTS[@]}"; do
         debug_log "Selected: $script (value: ${SELECTED_SCRIPTS[$script]})"
         echo -e "${GREEN}- $script${NC}"
     done
-    
+
     return 0
 }
 
@@ -313,7 +313,7 @@ ensure_requirements() {
 
     # Check platform first
     check_platform
-    
+
     # Check for git and curl first as they are essential
     for cmd in git curl; do
         if ! command -v $cmd &>/dev/null; then
@@ -774,10 +774,10 @@ select_scripts() {
         --inputbox "Enter search term (leave empty to show all):" \
         8 60 \
         2>"$DESC_FILE")
-    
+
     search_status=$?
     debug_log "Search dialog status: $search_status"
-    
+
     if [ $search_status -eq 0 ]; then
         search_term=$(cat "$DESC_FILE")
         debug_log "Searching for: '$search_term'"
@@ -790,7 +790,6 @@ select_scripts() {
         fi
     fi
     continue
-    ;;
 
     # Clean up temporary files
     rm -f "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
