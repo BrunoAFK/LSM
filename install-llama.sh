@@ -638,15 +638,23 @@ copy_files() {
         exit 1
     fi
 
+    debug_log "Copying main script 'llama'"
     if ! sudo cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"; then
         debug_log "ERROR: Failed to copy main script"
-        debug_log "cp exit code: $?"
         echo -e "${RED}Error: Failed to copy main script${NC}"
         exit 1
     fi
-
     sudo chmod +x "$INSTALL_DIR/llama"
-    debug_log "Main script permissions after chmod: $(ls -la $INSTALL_DIR/llama)"
+
+    # Update paths in the main script
+    debug_log "Updating paths in main script"
+    sudo sed -i "s|INSTALL_DIR=.*|INSTALL_DIR=\"$INSTALL_DIR\"|g" "$INSTALL_DIR/llama"
+    sudo sed -i "s|SCRIPTS_DIR=.*|SCRIPTS_DIR=\"$INSTALL_DIR/scripts\"|g" "$INSTALL_DIR/llama"
+    
+    # Verify the changes
+    debug_log "Verifying path updates in main script"
+    grep "INSTALL_DIR=" "$INSTALL_DIR/llama"
+    grep "SCRIPTS_DIR=" "$INSTALL_DIR/llama"
 
     # Create scripts directory if it doesn't exist
     debug_log "Checking scripts directory: $INSTALL_DIR/scripts"
@@ -850,6 +858,22 @@ main() {
             fi
         fi
     done
+
+    # Verify configuration
+    debug_log "Verifying llama configuration"
+    config_output=$(/usr/local/bin/llama status)
+    debug_log "Llama status output: $config_output"
+    
+    if echo "$config_output" | grep -q "/opt/llama"; then
+        debug_log "ERROR: Incorrect path configuration detected"
+        echo -e "${RED}Error: Incorrect path configuration detected${NC}"
+        echo "Fixing configuration..."
+        sudo sed -i "s|/opt/llama|$INSTALL_DIR|g" "$INSTALL_DIR/llama"
+        
+        # Verify fix
+        config_output=$(/usr/local/bin/llama status)
+        debug_log "Updated llama status output: $config_output"
+    fi
 
     # Show installation status
     echo -e "\n${BLUE}Installation Status:${NC}"
