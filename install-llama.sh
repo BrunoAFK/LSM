@@ -305,17 +305,21 @@ create_directories() {
 #------------------------------------------------------------------------------
 # Script Selection Interface
 #------------------------------------------------------------------------------
-sync_selections() {
+# Add this function to handle selection synchronization
+sync_dialog_selections() {
     local dialog_list="$1"
-    local output_file=$(mktemp)
+    local temp_file=$(mktemp)
+    local count=0
+    local name=""
+    local desc=""
 
     while IFS= read -r line; do
-        if [ $((++count % 3)) -eq 1 ]; then
-            name=$line
-        elif [ $((count % 3)) -eq 2 ]; then
-            desc=$line
-        else
-            if [ "${SELECTED_SCRIPTS[$name]+_}" ]; then
+        ((count++))
+        case $((count % 3)) in
+        1) name="$line" ;;
+        2) desc="$line" ;;
+        0)
+            if [[ -n "${SELECTED_SCRIPTS[$name]}" ]]; then
                 echo "$name"
                 echo "$desc"
                 echo "on"
@@ -324,11 +328,26 @@ sync_selections() {
                 echo "$desc"
                 echo "off"
             fi
-        fi
-    done <"$dialog_list" >"$output_file"
+            ;;
+        esac
+    done <"$dialog_list" >"$temp_file"
 
-    mv "$output_file" "$dialog_list"
+    mv "$temp_file" "$dialog_list"
 }
+
+process_selections() {
+    if [ -s "$CURRENT_SELECTIONS" ]; then
+        eval "selected_array=($(cat "$CURRENT_SELECTIONS"))"
+        for selected in "${selected_array[@]}"; do
+            selected=${selected//\"/}
+            if [ -n "$selected" ]; then
+                SELECTED_SCRIPTS[$selected]=1
+                debug_log "Added to final selection: $selected"
+            fi
+        done
+    fi
+}
+
 # Provides interactive UI for script selection
 # Supports featured scripts, search, and bulk installation
 
@@ -449,7 +468,7 @@ select_scripts() {
     # Show Featured Scripts Dialog
     local featured_selections=()
     while true; do
-        mark_selections "$FEATURED_LIST_FILE"
+        sync_dialog_selections "$FEATURED_LIST_FILE"
 
         dialog --title "Featured Scripts" \
             --backtitle "Llama Script Manager Installer v${VERSION}" \
@@ -463,43 +482,20 @@ select_scripts() {
             2>"$CURRENT_SELECTIONS"
 
         local featured_status=$?
-        debug_log "Featured dialog status: $featured_status"
 
         case $featured_status in
-        0) # Next pressed
-            # Process current selections
-            if [ -s "$CURRENT_SELECTIONS" ]; then
-                eval "featured_selections=($(cat "$CURRENT_SELECTIONS"))"
-                for selected in "${featured_selections[@]}"; do
-                    selected=${selected//\"/}
-                    if [ -n "$selected" ]; then
-                        SELECTED_SCRIPTS[$selected]=1
-                        debug_log "Selected featured script: $selected"
-                    fi
-                done
-            fi
+        0) # Next pressed - proceed to market dialog
+            process_featured_selections "$CURRENT_SELECTIONS"
             break
             ;;
         1) # Exit pressed
-            debug_log "Exit pressed in featured dialog"
             return 1
             ;;
         3) # Add All pressed
-            debug_log "Add All pressed in featured dialog"
-            # Select all featured scripts
-            local count=0
-            while IFS= read -r line; do
-                if [ $((++count % 3)) -eq 1 ]; then
-                    SELECTED_SCRIPTS[$line]=1
-                    debug_log "Added featured script: $line"
-                fi
-            done <"$FEATURED_LIST_FILE"
-            # Re-mark selections to show updated state
-            mark_selections "$FEATURED_LIST_FILE"
+            add_all_featured
             continue
             ;;
-        255) # ESC pressed
-            debug_log "ESC pressed in featured dialog"
+        255) # ESC pressed - treat as Exit
             return 1
             ;;
         esac
@@ -516,13 +512,13 @@ select_scripts() {
     mark_selections "$current_list"
 
     while true; do
-        debug_log "Showing all scripts dialog with current_list: $current_list"
-        debug_log "Current selections before market dialog: ${!SELECTED_SCRIPTS[*]}"
+        # Store current selections before showing dialog
+        local previous_selections=("${!SELECTED_SCRIPTS[@]}")
 
         dialog --title "Script Market" \
             --backtitle "Llama Script Manager Installer v${VERSION}" \
             --ok-label "Install Selected" \
-            --cancel-label "Exit" \
+            --cancel-label "Back" \
             --help-button --help-label "Search" \
             --extra-button --extra-label "Show All" \
             --colors \
@@ -535,60 +531,23 @@ select_scripts() {
         debug_log "Market dialog status: $market_status"
 
         case $market_status in
-        0)
-            debug_log "Processing final selections from all scripts dialog"
-            if [ -s "$CURRENT_SELECTIONS" ]; then
-                eval "selected_array=($(cat "$CURRENT_SELECTIONS"))"
-                for selected in "${selected_array[@]}"; do
-                    selected=${selected//\"/}
-                    if [ -n "$selected" ]; then
-                        SELECTED_SCRIPTS[$selected]=1
-                        debug_log "Added to final selection: $selected"
-                    fi
-                done
-            fi
-            debug_log "Final selection complete, returning with success"
+        0) # OK pressed - proceed with installation
+            process_selections
             return 0
             ;;
-        1 | 255)
-            debug_log "Exit selected or ESC pressed"
-            return 1
+        1) # Back pressed - return to featured dialog
+            SELECTED_SCRIPTS=()
+            for selection in "${previous_selections[@]}"; do
+                SELECTED_SCRIPTS[$selection]=1
+            done
+            continue 2 # Continue outer loop
             ;;
-        2) # Search
-            debug_log "Search button pressed"
-            local search_term=$(dialog --title "Search Scripts" \
-                --backtitle "Llama Script Manager Installer v${VERSION}" \
-                --inputbox "Enter search term (leave empty to show all):" \
-                8 60 \
-                2>&1)
-
-            local search_status=$?
-            debug_log "Search dialog status: $search_status"
-
-            if [ $search_status -eq 0 ]; then
-                if [ -n "$search_term" ]; then
-                    debug_log "Searching for: '$search_term'"
-                    filter_scripts "$search_term" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
-                    current_list="$FILTERED_LIST_FILE"
-                    search_active=true
-                    last_search="$search_term"
-                else
-                    debug_log "Empty search term, showing all scripts"
-                    current_list="$ALL_LIST_FILE"
-                    search_active=false
-                    last_search=""
-                fi
-            fi
-            # Re-mark selections after search
-            mark_selections "$current_list"
-            ;;
-        3) # Show All
-            debug_log "Show All button pressed"
-            current_list="$ALL_LIST_FILE"
-            search_active=false
-            last_search=""
-            # Re-mark selections after showing all
-            mark_selections "$current_list"
+        255) # ESC pressed - handle like Back
+            SELECTED_SCRIPTS=()
+            for selection in "${previous_selections[@]}"; do
+                SELECTED_SCRIPTS[$selection]=1
+            done
+            continue 2 # Continue outer loop
             ;;
         esac
     done
