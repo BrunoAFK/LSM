@@ -28,6 +28,14 @@ declare -A SELECTED_SCRIPTS
 # Debug flag
 DEBUG=true # Set to true to enable debug output
 
+# Configuration
+GITHUB_USER="BrunoAFK"
+GITHUB_REPO="LSM"
+GITHUB_BRANCH="dev"
+INSTALL_DIR="/usr/local/lib/llama"
+BIN_DIR="/usr/local/bin"
+REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
+
 #------------------------------------------------------------------------------
 # Error Management
 #------------------------------------------------------------------------------
@@ -92,15 +100,6 @@ handle_error() {
 # Update trap setup
 trap 'cleanup_temp_files' EXIT
 trap 'handle_error $? $LINENO' ERR INT TERM
-
-# Configuration
-GITHUB_USER="BrunoAFK"
-GITHUB_REPO="LSM"
-GITHUB_BRANCH="dev"
-INSTALL_DIR="/usr/local/lib/llama"
-BIN_DIR="/usr/local/bin"
-REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
-
 #------------------------------------------------------------------------------
 # Utility Functions
 #------------------------------------------------------------------------------
@@ -348,7 +347,7 @@ create_directories() {
 #------------------------------------------------------------------------------
 # Provides interactive UI for script selection
 # Supports featured scripts, search, and bulk installation
-select_scripts() {
+select_scriptsB() {
     print_section_header "Script Selection"
     local scripts_dir="$TEMP_DIR/repo/scripts"
     debug_log "Starting select_scripts function"
@@ -545,6 +544,242 @@ select_scripts() {
     rm -f "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
 }
 
+select_scripts() {
+    print_section_header "Script Selection"
+    local scripts_dir="$TEMP_DIR/repo/scripts"
+    debug_log "Starting select_scripts function"
+    debug_log "Scripts directory: $scripts_dir"
+
+    # Create temporary files
+    local SCRIPT_LIST_FILE=$(mktemp)
+    local FEATURED_LIST_FILE=$(mktemp)
+    local ALL_LIST_FILE=$(mktemp)
+    local FILTERED_LIST_FILE=$(mktemp)
+    local CURRENT_SELECTIONS=$(mktemp)
+
+    # Download and parse script_list.json
+    debug_log "Downloading script_list.json"
+    local json_url="https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/$GITHUB_BRANCH/script_list.json"
+    debug_log "Attempting to download from: $json_url"
+
+    local json_content=$(curl -sS -w "\nHTTP_CODE:%{http_code}" "$json_url")
+    local http_code=$(echo "$json_content" | grep "HTTP_CODE:" | cut -d":" -f2)
+    json_content=$(echo "$json_content" | grep -v "HTTP_CODE:")
+
+    # Validate download and JSON
+    if [ "$http_code" != "200" ] || ! echo "$json_content" | jq '.' >/dev/null 2>&1; then
+        debug_log "ERROR: Failed to download or parse script_list.json"
+        echo -e "${RED}Error: Failed to get script list${NC}"
+        return 1
+    fi
+
+    echo "$json_content" >"$SCRIPT_LIST_FILE"
+
+    # Prepare lists
+    jq -r '.scripts[] | select(.rank | contains("Featured")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" >"$FEATURED_LIST_FILE"
+    jq -r '.scripts[] | select(.path | contains("./scripts/")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" >"$ALL_LIST_FILE"
+
+    # Function to mark previously selected scripts
+    mark_selections() {
+        local input_file="$1"
+        local output_file=$(mktemp)
+        local count=0
+
+        while IFS= read -r line; do
+            ((count++))
+            if [ $((count % 3)) -eq 1 ]; then
+                # Check if script is in SELECTED_SCRIPTS
+                if [ "${SELECTED_SCRIPTS[$line]+_}" ]; then
+                    echo "$line"
+                    read -r desc
+                    echo "$desc"
+                    echo "on"
+                    continue
+                fi
+            fi
+            echo "$line"
+        done <"$input_file" >"$output_file"
+
+        mv "$output_file" "$input_file"
+    }
+
+    # Function to filter scripts based on search term
+    filter_scripts() {
+        local search_term="$1"
+        local source_file="$2"
+        local target_file="$3"
+
+        debug_log "Filtering scripts with search term: $search_term"
+        if [ -z "$search_term" ]; then
+            cp "$source_file" "$target_file"
+        else
+            awk -v search="${search_term,,}" '
+            {
+                if (NR % 3 == 1) script=$0;
+                if (NR % 3 == 2) desc=$0;
+                if (NR % 3 == 0) {
+                    if (tolower(script) ~ search || tolower(desc) ~ search) {
+                        print prev2; print prev1; print $0;
+                    }
+                }
+                prev2=script;
+                prev1=desc;
+            }' "$source_file" >"$target_file"
+        fi
+    }
+
+    # First dialog: Choose installation mode
+    dialog --title "Installation Mode" \
+        --backtitle "Llama Script Manager Installer v${VERSION}" \
+        --yes-label "Install All" \
+        --no-label "Custom Selection" \
+        --yesno "\nChoose installation mode:\n\nInstall All: Install all available scripts\nCustom Selection: Choose which scripts to install" \
+        12 60
+
+    local mode_choice=$?
+    debug_log "Installation mode choice: $mode_choice"
+
+    case $mode_choice in
+    0)
+        debug_log "Installing all scripts"
+        while IFS= read -r line; do
+            if [ $((++count % 3)) -eq 1 ]; then
+                SELECTED_SCRIPTS["$line"]=1
+                debug_log "Adding all script: $line"
+            fi
+        done <"$ALL_LIST_FILE"
+        return 0
+        ;;
+    1) ;;
+    *)
+        debug_log "Installation cancelled"
+        return 1
+        ;;
+    esac
+
+    # Show Featured Scripts Dialog
+    while true; do
+        mark_selections "$FEATURED_LIST_FILE"
+
+        dialog --title "Featured Scripts" \
+            --backtitle "Llama Script Manager Installer v${VERSION}" \
+            --ok-label "Next" \
+            --cancel-label "Skip" \
+            --colors \
+            --checklist "\Zn\Z3Featured Scripts\Zn (use SPACE to select/unselect):" \
+            $DIALOG_HEIGHT $DIALOG_WIDTH $((DIALOG_HEIGHT - 8)) \
+            --file "$FEATURED_LIST_FILE" \
+            2>"$CURRENT_SELECTIONS"
+
+        local featured_status=$?
+        debug_log "Featured dialog status: $featured_status"
+
+        # Process featured selections
+        if [ -s "$CURRENT_SELECTIONS" ]; then
+            # Clear previous selections from featured scripts
+            while IFS= read -r line; do
+                if [ $((++count % 3)) -eq 1 ]; then
+                    unset "SELECTED_SCRIPTS[$line]"
+                fi
+            done <"$FEATURED_LIST_FILE"
+
+            # Add new selections
+            eval "selected_array=($(cat "$CURRENT_SELECTIONS"))"
+            for selected in "${selected_array[@]}"; do
+                selected=${selected//\"/}
+                if [ -n "$selected" ]; then
+                    SELECTED_SCRIPTS[$selected]=1
+                    debug_log "Selected featured script: $selected"
+                fi
+            done
+        fi
+
+        break
+    done
+
+    # All Scripts Dialog with Search
+    local current_list="$ALL_LIST_FILE"
+    local search_active=false
+    local last_search=""
+
+    while true; do
+        mark_selections "$current_list"
+
+        dialog --title "Script Market" \
+            --backtitle "Llama Script Manager Installer v${VERSION}" \
+            --ok-label "Install Selected" \
+            --cancel-label "Back" \
+            --help-button --help-label "Search" \
+            --extra-button --extra-label "Show All" \
+            --colors \
+            --checklist "\Zn\Z2Available Scripts\Zn (use SPACE to select/unselect):\n\Z3Current filter: ${last_search:-none}\Zn" \
+            $DIALOG_HEIGHT $DIALOG_WIDTH $((DIALOG_HEIGHT - 8)) \
+            --file "$current_list" \
+            2>"$CURRENT_SELECTIONS"
+
+        local market_status=$?
+        debug_log "Market dialog status: $market_status"
+
+        case $market_status in
+        0)
+            while IFS= read -r selected; do
+                selected=${selected//\"/}
+                if [ -n "$selected" ]; then
+                    SELECTED_SCRIPTS[$selected]=1
+                    debug_log "Added to final selection: $selected"
+                fi
+            done <"$CURRENT_SELECTIONS"
+            return 0
+            ;;
+        1)
+            if [ ${#SELECTED_SCRIPTS[@]} -gt 0 ]; then
+                return 0
+            else
+                return 1
+            fi
+            ;;
+        2)
+            local search_term=$(dialog --title "Search Scripts" \
+                --backtitle "Llama Script Manager Installer v${VERSION}" \
+                --inputbox "Enter search term (leave empty to show all):" \
+                8 60 \
+                2>"$DESC_FILE")
+
+            if [ $? -eq 0 ]; then
+                search_term=$(cat "$DESC_FILE")
+                if [ -n "$search_term" ]; then
+                    debug_log "Searching for: '$search_term'"
+                    filter_scripts "$search_term" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
+                    current_list="$FILTERED_LIST_FILE"
+                    search_active=true
+                    last_search="$search_term"
+                else
+                    current_list="$ALL_LIST_FILE"
+                    search_active=false
+                    last_search=""
+                fi
+            fi
+            ;;
+        3)
+            current_list="$ALL_LIST_FILE"
+            search_active=false
+            last_search=""
+            ;;
+        *)
+            debug_log "Unknown dialog return code: $market_status"
+            if [ ${#SELECTED_SCRIPTS[@]} -gt 0 ]; then
+                return 0
+            else
+                return 1
+            fi
+            ;;
+        esac
+    done
+
+    # Clean up temporary files
+    rm -f "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE" "$CURRENT_SELECTIONS"
+}
+
 #------------------------------------------------------------------------------
 # Installation Process
 #------------------------------------------------------------------------------
@@ -552,15 +787,15 @@ select_scripts() {
 verify_script_execution() {
     local script="$1"
     debug_log "Verifying script execution: $script"
-    
+
     # Check shebang
     local shebang=$(head -n 1 "$script")
     debug_log "Script shebang: $shebang"
-    
+
     # Check permissions
     local perms=$(stat -c "%a" "$script")
     debug_log "Script permissions: $perms"
-    
+
     # Try executing with various methods
     debug_log "Testing direct execution"
     if ! "$script" --help >/dev/null 2>&1; then
@@ -570,7 +805,7 @@ verify_script_execution() {
             return 1
         fi
     fi
-    
+
     return 0
 }
 
@@ -597,7 +832,7 @@ copy_files() {
     debug_log "Copying main script 'llama'"
     sudo cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"
     sudo chmod +x "$INSTALL_DIR/llama"
-    
+
     # Update the script paths
     sudo sed -i "s|/opt/llama|$INSTALL_DIR|g" "$INSTALL_DIR/llama"
 
@@ -612,7 +847,7 @@ copy_files() {
     debug_log "Verifying installation..."
     local installed_count=$(ls -1 "$INSTALL_DIR/scripts" 2>/dev/null | wc -l)
     debug_log "Number of installed scripts: $installed_count"
-    
+
     if [ $installed_count -eq 0 ]; then
         debug_log "ERROR: No scripts found in installation directory"
         echo -e "${RED}Error: Installation verification failed${NC}"
@@ -627,27 +862,27 @@ copy_files() {
 create_symlink() {
     print_section_header "Creating Symlink"
     debug_log "Creating symlink from $INSTALL_DIR/llama to $BIN_DIR/llama"
-    
+
     # Remove existing symlink if it exists
     if [ -L "$BIN_DIR/llama" ]; then
         debug_log "Removing existing symlink"
         sudo rm -f "$BIN_DIR/llama"
     fi
-    
+
     # Create new symlink
     if ! sudo ln -sf "$INSTALL_DIR/llama" "$BIN_DIR/llama"; then
         debug_log "ERROR: Failed to create symlink"
         echo -e "${RED}Error: Failed to create symlink${NC}"
         exit 1
     fi
-    
+
     # Verify symlink
     if [ ! -L "$BIN_DIR/llama" ]; then
         debug_log "ERROR: Symlink verification failed"
         echo -e "${RED}Error: Symlink verification failed${NC}"
         exit 1
     fi
-    
+
     debug_log "Symlink created successfully"
     debug_log "Symlink details: $(ls -la $BIN_DIR/llama)"
 }
@@ -716,7 +951,6 @@ main() {
         echo -e "${RED}Error: 'Llama Script Manager Status' not found${NC}"
         exit 1
     fi
-
 
     echo -e "\n${GREEN}Installation completed successfully!${NC}"
     echo -e "Try these commands:"
