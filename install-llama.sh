@@ -20,7 +20,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="2.0.12"
+VERSION="2.0.15"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -455,28 +455,83 @@ select_scripts() {
         mv "$output_file" "$input_file"
     }
 
+    # Add this function for search dialog
+    show_search_dialog() {
+        debug_log "Showing search dialog"
+
+        local search_result=$(dialog --title "Search Scripts" \
+            --backtitle "Llama Script Manager Installer v${VERSION}" \
+            --inputbox "Enter search term (leave empty to show all):" \
+            10 60 \
+            3>&1 1>&2 2>&3)
+
+        local dialog_status=$?
+        debug_log "Search dialog status: $dialog_status"
+
+        if [ $dialog_status -eq 0 ]; then
+            echo "$search_result"
+            return 0
+        else
+            return 1
+        fi
+    }
+
     # Function to filter scripts based on search term
+    # Add improved filter_scripts function
     filter_scripts() {
         local search_term="$1"
         local source_file="$2"
         local target_file="$3"
 
-        debug_log "Filtering scripts with search term: $search_term"
+        debug_log "Filtering scripts with search term: '$search_term'"
+
+        # If search term is empty, just copy the source file
         if [ -z "$search_term" ]; then
             cp "$source_file" "$target_file"
+            return 0
+        fi
+
+        # Convert search term to lowercase for case-insensitive search
+        search_term=$(echo "$search_term" | tr '[:upper:]' '[:lower:]')
+
+        # Create temporary file for filtered results
+        local temp_file=$(mktemp)
+
+        # Read source file in groups of 3 lines
+        while IFS= read -r name; do
+            IFS= read -r desc || break
+            IFS= read -r state || break
+
+            # Convert name and description to lowercase for comparison
+            local name_lower=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+            local desc_lower=$(echo "$desc" | tr '[:upper:]' '[:lower:]')
+
+            # Check if search term appears in name or description
+            if [[ "$name_lower" == *"$search_term"* ]] || [[ "$desc_lower" == *"$search_term"* ]]; then
+                echo "$name" >>"$temp_file"
+                echo "$desc" >>"$temp_file"
+                # Maintain selected state if item was previously selected
+                if [[ -n "${SELECTED_SCRIPTS[$name]}" ]]; then
+                    echo "on" >>"$temp_file"
+                else
+                    echo "off" >>"$temp_file"
+                fi
+                debug_log "Found matching script: $name"
+            fi
+        done <"$source_file"
+
+        # If we found any matches, use the filtered results
+        if [ -s "$temp_file" ]; then
+            mv "$temp_file" "$target_file"
+            debug_log "Filter created with matches"
+            return 0
         else
-            awk -v search="${search_term,,}" '
-            {
-                if (NR % 3 == 1) script=$0;
-                if (NR % 3 == 2) desc=$0;
-                if (NR % 3 == 0) {
-                    if (tolower(script) ~ search || tolower(desc) ~ search) {
-                        print prev2; print prev1; print $0;
-                    }
-                }
-                prev2=script;
-                prev1=desc;
-            }' "$source_file" >"$target_file"
+            # If no matches, create an empty list with a message
+            echo "no_matches" >"$target_file"
+            echo "\"No scripts found matching: $search_term\"" >>"$target_file"
+            echo "off" >>"$target_file"
+            debug_log "No matches found for search term"
+            return 1
         fi
     }
 
@@ -595,15 +650,12 @@ select_scripts() {
             return 1
             ;;
         2) # Search pressed
-            local search_term=$(dialog --title "Search Scripts" \
-                --backtitle "Llama Script Manager Installer v${VERSION}" \
-                --inputbox "Enter search term (leave empty to show all):" \
-                8 60 \
-                2>&1)
+            search_term=$(show_search_dialog)
+            search_status=$?
 
-            if [ $? -eq 0 ]; then
+            if [ $search_status -eq 0 ]; then
                 if [ -n "$search_term" ]; then
-                    debug_log "Searching for: '$search_term'"
+                    debug_log "Processing search for: '$search_term'"
                     filter_scripts "$search_term" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
                     current_list="$FILTERED_LIST_FILE"
                     search_active=true
@@ -614,6 +666,10 @@ select_scripts() {
                     search_active=false
                     last_search=""
                 fi
+                # Re-sync selections after search
+                sync_dialog_with_selections "$current_list"
+            else
+                debug_log "Search cancelled"
             fi
             ;;
         3) # Show All pressed
@@ -621,8 +677,16 @@ select_scripts() {
             current_list="$ALL_LIST_FILE"
             search_active=false
             last_search=""
+            sync_dialog_with_selections "$current_list"
             ;;
         255) # ESC pressed
+            if [ "$search_active" = true ]; then
+                debug_log "ESC pressed during search, showing all scripts"
+                current_list="$ALL_LIST_FILE"
+                search_active=false
+                last_search=""
+                continue
+            fi
             return 1
             ;;
         esac
