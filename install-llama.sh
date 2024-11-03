@@ -649,14 +649,12 @@ select_scripts() {
     esac
 
     # Show Featured Scripts Dialog
-    # Show Featured Scripts Dialog
     while true; do
         mark_selections "$FEATURED_LIST_FILE"
 
         dialog --title "Featured Scripts" \
             --backtitle "Llama Script Manager Installer v${VERSION}" \
             --ok-label "Next" \
-            --cancel-label "Skip" \
             --colors \
             --checklist "\Zn\Z3Featured Scripts\Zn (use SPACE to select/unselect):" \
             $DIALOG_HEIGHT $DIALOG_WIDTH $((DIALOG_HEIGHT - 8)) \
