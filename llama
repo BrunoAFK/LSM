@@ -3,10 +3,10 @@
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
 # Github: github.com/brunoafk
-# Version: 1.1.2
+# Version: 1.1.3
 # Description: Enhanced script manager with development and production environment support
 
-VERSION="1.1.2"
+VERSION="1.1.3"
 GITHUB_USER="BrunoAFK"
 GITHUB_REPO="LSM"
 GITHUB_BRANCH="main"
@@ -52,14 +52,14 @@ get_bin_path() {
     fi
 }
 
-# Display help information with environment indication
+# Display help information with environment indication and script descriptions
 show_help() {
     echo -e "\e[1;34mLlama Script Manager v$VERSION\e[0m"
     echo
     echo -e "\e[1;32mUsage:\e[0m"
     echo "  llama [COMMAND] [ARGUMENTS]"
     echo
-    echo -e "\e[1;33mCommands:\e[0m"
+    echo -e "\e[1;33mCore Commands:\e[0m"
     printf "%-20s %-40s\n" "Command" "Description"
     printf "%-20s %-40s\n" "-------" "-----------"
     printf "%-20s %-40s\n" "help, -h" "Show this help message"
@@ -73,7 +73,15 @@ show_help() {
     if [ -d "$scripts_dir" ]; then
         for script in "$scripts_dir"/*; do
             if [ -x "$script" ]; then
-                echo "  $(basename "$script")"
+                script_name=$(basename "$script")
+                # Extract description from script file (first 20 lines, case insensitive)
+                description=$(head -n 20 "$script" | grep -i "^#.*description:" | head -n 1 | sed 's/^#[ ]*[Dd]escription:[ ]*//')
+                if [ -z "$description" ]; then
+                    description="No description available"
+                fi
+                echo -e "\e[1;36m${script_name}\e[0m"
+                echo "    ${description}"
+                echo
             fi
         done
     fi

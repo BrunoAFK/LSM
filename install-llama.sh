@@ -20,7 +20,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.0.50"
+VERSION="1.1.0"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -310,11 +310,11 @@ select_scripts() {
     debug_log "Launching dialog command..."
     echo -e "${BLUE}Launching dialog...${NC}"
 
-    # In the select_scripts function, replace the dialog command with:
     if dialog --title "Script Selection" \
         --backtitle "Llama Script Manager Installer v${VERSION}" \
         --extra-button --extra-label "Install All" \
-        --checklist "Select scripts to install (use SPACE to select/unselect):" \
+        --item-help \
+        --searchbox "Search scripts (press Enter to show results):" \
         $height 100 $((height - 8)) \
         --file "$TEMP_FILE" \
         2>"$DESC_FILE"; then
