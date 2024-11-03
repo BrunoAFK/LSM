@@ -26,7 +26,7 @@ VERSION="2.0.12"
 declare -A SELECTED_SCRIPTS
 
 # Debug flag
-DEBUG=false # Set to true to enable debug output
+DEBUG=true # Set to true to enable debug output
 
 # Configuration
 GITHUB_USER="BrunoAFK"
