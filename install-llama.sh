@@ -20,7 +20,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.1.6"
+VERSION="1.1.7"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -377,7 +377,7 @@ select_scripts() {
         if [ $filtered_count -eq 0 ]; then
             dialog --msgbox "No scripts found matching: $search_term" 8 40
             continue
-        }
+        fi
 
         # Calculate dialog height
         local height=$((filtered_count + 10))
