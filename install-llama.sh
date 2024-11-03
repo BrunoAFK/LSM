@@ -609,7 +609,7 @@ select_scripts() {
 #------------------------------------------------------------------------------
 # Installation Functions
 #------------------------------------------------------------------------------
-copy_filesB() {
+copy_files() {
     print_section_header "Copying Files"
     debug_log "Number of selected scripts: ${#SELECTED_SCRIPTS[@]}"
 
@@ -655,7 +655,7 @@ copy_filesB() {
     fi
 }
 
-copy_files() {
+copy_filesb() {
     print_section_header "Copying Files"
     debug_log "Number of selected scripts: ${#SELECTED_SCRIPTS[@]}"
 
