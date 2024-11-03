@@ -108,7 +108,7 @@ trap 'handle_error $? $LINENO' ERR INT TERM
 # Configuration
 GITHUB_USER="BrunoAFK"
 GITHUB_REPO="LSM"
-GITHUB_BRANCH="main"
+GITHUB_BRANCH="dev"
 INSTALL_DIR="/usr/local/lib/llama"
 BIN_DIR="/usr/local/bin"
 REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
@@ -307,10 +307,12 @@ select_scripts() {
     
     debug_log "HTTP Response Code: $http_code"
     debug_log "Response Content Length: ${#json_content}"
+    debug_log "Response Content: $json_content"
     
     # Check HTTP response
     if [ "$http_code" != "200" ]; then
         debug_log "ERROR: Failed to download script_list.json - HTTP $http_code"
+        debug_log "Full Response: $json_content"
         echo -e "${RED}Error: Failed to download script list (HTTP $http_code)${NC}"
         return 1
     fi
