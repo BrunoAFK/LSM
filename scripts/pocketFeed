@@ -5,6 +5,7 @@
 # Web: pavelja.me
 # Github: github.com/brunoafk
 # Version: 1.0
+# Rank: Featured
 # Description: This script extracts URLs from a given RSS/Atom feed and adds them to ArchiveBox.
 # How it works: The script fetches the feed content, extracts all URLs, and saves them in a hash-named file.
 # Important variables:
