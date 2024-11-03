@@ -19,13 +19,13 @@ debug_log() {
 # Function to extract description from script
 get_description() {
     local file="$1"
-    grep -i "^#.*Description:" "$file" | sed 's/^#.*Description:\s*//' | head -n 1
+    grep -i "^#.*Description:" "$file" | sed 's/^#.*Description:\s*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | head -n 1
 }
 
 # Function to extract rank from script
 get_rank() {
     local file="$1"
-    grep -i "^#.*Rank:" "$file" | sed 's/^#.*Rank:\s*//' | head -n 1
+    grep -i "^#.*Rank:" "$file" | sed 's/^#.*Rank:\s*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | head -n 1
 }
 
 # Initialize array to store script entries
