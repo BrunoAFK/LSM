@@ -35,9 +35,8 @@ handle_error() {
     local exit_code=$1
     local line_number=$2
     
-    # Disable error handling
-    set +e
-    trap - ERR
+    # Call cleanup before handling the error
+    cleanup_temp_files
     
     echo -e "${RED}Installation failed at line $line_number with exit code $exit_code${NC}" >&2
     if [ "$DEBUG" = true ]; then
@@ -47,37 +46,24 @@ handle_error() {
 }
 
 cleanup_temp_files() {
-    # Disable error handling during cleanup
-    set +e
-    trap - ERR
-    
     echo -e "${YELLOW}Cleaning up temporary files...${NC}"
     
-    # Remove temporary directory and its contents
-    if [ -d "$TEMP_DIR" ]; then
-        rm -rf "$TEMP_DIR" || true
-    fi
+    # Remove temporary directory and its contents if they exist
+    [ -d "$TEMP_DIR" ] && rm -rf "$TEMP_DIR" 2>/dev/null
+    [ -f "$TEMP_FILE" ] && rm -f "$TEMP_FILE" 2>/dev/null
+    [ -f "$DESC_FILE" ] && rm -f "$DESC_FILE" 2>/dev/null
+    [ -f "/tmp/dialog_debug.log" ] && rm -f "/tmp/dialog_debug.log" 2>/dev/null
     
-    # Remove temporary files
-    if [ -f "$TEMP_FILE" ]; then
-        rm -f "$TEMP_FILE" || true
-    fi
-    if [ -f "$DESC_FILE" ]; then
-        rm -f "$DESC_FILE" || true
-    fi
-    
-    # Remove debug log only if DEBUG is true
-    if [ "$DEBUG" = true ] && [ -f "/tmp/dialog_debug.log" ]; then
-        rm -f "/tmp/dialog_debug.log" || true
-    fi
-    
-    # Re-enable error handling
-    set -e
+    # Additional temporary files created during script selection
+    [ -f "$SCRIPT_LIST_FILE" ] && rm -f "$SCRIPT_LIST_FILE" 2>/dev/null
+    [ -f "$FEATURED_LIST_FILE" ] && rm -f "$FEATURED_LIST_FILE" 2>/dev/null
+    [ -f "$ALL_LIST_FILE" ] && rm -f "$ALL_LIST_FILE" 2>/dev/null
+    [ -f "$FILTERED_LIST_FILE" ] && rm -f "$FILTERED_LIST_FILE" 2>/dev/null
 }
 
-# Set up error handling
+# Update trap setup
 trap 'cleanup_temp_files' EXIT
-trap 'handle_error $? $LINENO' ERR
+trap 'handle_error $? $LINENO' ERR INT TERM
 
 # Configuration
 GITHUB_USER="BrunoAFK"
