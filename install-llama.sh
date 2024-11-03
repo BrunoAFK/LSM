@@ -480,7 +480,6 @@ select_scriptsB() {
     debug_log "Script selection completed with ${#SELECTED_SCRIPTS[@]} scripts selected"
     return 0
 }
-
 select_scripts() {
     print_section_header "Script Selection"
     local scripts_dir="$TEMP_DIR/repo/scripts"
@@ -596,6 +595,7 @@ select_scripts() {
             ;;
         *) # Cancel
             debug_log "Featured script selection cancelled"
+            rm -f "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
             return 1
             ;;
         esac
@@ -630,7 +630,7 @@ select_scripts() {
                     debug_log "Selected script: $selected"
                 fi
             done <"$DESC_FILE"
-            return 0
+            break
             ;;
         2) # Search (Help button)
             debug_log "Search requested"
@@ -656,17 +656,24 @@ select_scripts() {
                     debug_log "Adding all script: $line"
                 fi
             done <"$ALL_LIST_FILE"
-            return 0
+            break
             ;;
         *) # Exit
             debug_log "Market selection cancelled"
             if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
+                rm -f "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
                 return 1
             fi
-            return 0
+            break
             ;;
         esac
     done
+
+    # Clean up temporary files
+    rm -f "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
+
+    debug_log "Script selection completed with ${#SELECTED_SCRIPTS[@]} scripts selected"
+    return 0
 }
 
 #------------------------------------------------------------------------------
