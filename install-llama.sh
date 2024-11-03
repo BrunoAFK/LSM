@@ -791,7 +791,7 @@ main() {
 
     # Verify llama executable works
     debug_log "Testing llama executable"
-    if ! /usr/local/bin/llama --version >/dev/null 2>&1; then
+    if ! /usr/local/bin/llama status >/dev/null 2>&1; then
         debug_log "ERROR: llama executable test failed"
         echo -e "${RED}Error: llama executable test failed${NC}"
         exit 1
