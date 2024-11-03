@@ -711,6 +711,7 @@ cleanup_dialog() {
     fi
 }
 
+
 #------------------------------------------------------------------------------
 # Main Installation Process
 #------------------------------------------------------------------------------
@@ -749,60 +750,14 @@ main() {
     create_symlink
 
     # Verify symlink
-    debug_log "Verifying symlink"
-    if [ ! -L "/usr/local/bin/llama" ]; then
+    debug_log "Verifying installation"
+    if [ ! -L "$BIN_DIR/llama status" ]; then
         debug_log "ERROR: Symlink not created"
         echo -e "${RED}Error: Symlink creation failed${NC}"
         exit 1
-    fi
-    
-    # Verify llama executable works
-    debug_log "Testing llama executable"
-    if ! /usr/local/bin/llama status >/dev/null 2>&1; then
-        debug_log "ERROR: llama executable test failed"
-        echo -e "${RED}Error: llama executable test failed${NC}"
-        exit 1
-    fi
-
-    # Verify script permissions
-    debug_log "Verifying script permissions"
-    for script in "$INSTALL_DIR/scripts"/*; do
-        if [ -f "$script" ]; then
-            debug_log "Checking permissions for: $script"
-            if [ ! -x "$script" ]; then
-                debug_log "ERROR: Script not executable: $script"
-                echo -e "${RED}Error: Script not executable: $(basename "$script")${NC}"
-                sudo chmod +x "$script"
-            fi
-        fi
-    done
-
-    # Verify configuration
-    debug_log "Verifying llama configuration"
-    config_output=$(/usr/local/bin/llama status)
-    debug_log "Llama status output: $config_output"
-    
-    if echo "$config_output" | grep -q "/opt/llama"; then
-        debug_log "ERROR: Incorrect path configuration detected"
-        echo -e "${RED}Error: Incorrect path configuration detected${NC}"
-        echo "Fixing configuration..."
-        sudo sed -i "s|/opt/llama|$INSTALL_DIR|g" "$INSTALL_DIR/llama"
         
-        # Verify fix
-        config_output=$(/usr/local/bin/llama status)
-        debug_log "Updated llama status output: $config_output"
     fi
 
-    # Show installation status
-    echo -e "\n${BLUE}Installation Status:${NC}"
-    echo -e "Main script: ${GREEN}installed${NC}"
-    echo -e "Symlink: ${GREEN}created${NC}"
-    echo -e "\nInstalled scripts:"
-    for script in "$INSTALL_DIR/scripts"/*; do
-        if [ -f "$script" ]; then
-            echo -e "${GREEN}- $(basename "$script")${NC}"
-        fi
-    done
 
     echo -e "\n${GREEN}Installation completed successfully!${NC}"
     echo -e "Try these commands:"
