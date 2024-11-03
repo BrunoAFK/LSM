@@ -655,7 +655,7 @@ copy_files() {
             debug_log "ERROR: Source file not found: $script_path"
             echo -e "${RED}Error: Script file not found: $script_name${NC}"
             continue
-        }
+        fi
 
         echo -e "${GREEN}Installing: $script_name${NC}"
         
