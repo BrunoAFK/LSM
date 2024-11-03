@@ -742,7 +742,7 @@ select_scripts() {
     done
 
     # Exit if ESC was pressed in featured dialog
-    if [ "$featured_status" -eq 255 || "$featured_status" -eq 1 ]; then
+    if [[ "$featured_status" -eq 255 || "$featured_status" -eq 1 ]]; then
         debug_log "Featured scripts dialog cancelled"
         return 1
     fi
