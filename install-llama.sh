@@ -655,6 +655,7 @@ select_scripts() {
         dialog --title "Featured Scripts" \
             --backtitle "Llama Script Manager Installer v${VERSION}" \
             --ok-label "Next" \
+            --cancel-label "Exit" \
             --colors \
             --checklist "\Zn\Z3Featured Scripts\Zn (use SPACE to select/unselect):" \
             $DIALOG_HEIGHT $DIALOG_WIDTH $((DIALOG_HEIGHT - 8)) \
@@ -663,6 +664,19 @@ select_scripts() {
 
         local featured_status=$?
         debug_log "Featured dialog status: $featured_status"
+
+        case $market_status in
+            1 | 255) # Exit or ESC
+                debug_log "Exit selected or ESC pressed"
+                if [ ${#SELECTED_SCRIPTS[@]} -gt 0 ]; then
+                    debug_log "Returning with existing selections"
+                    break
+                else
+                    debug_log "No selections made, returning with failure"
+                    return 1
+                fi
+                ;;
+        esac
 
         # Process featured selections
         if [ -s "$CURRENT_SELECTIONS" ]; then
