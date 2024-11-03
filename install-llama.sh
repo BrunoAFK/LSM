@@ -295,20 +295,37 @@ select_scripts() {
     local ALL_LIST_FILE=$(mktemp)
     local FILTERED_LIST_FILE=$(mktemp)
 
-    # Download and parse script_list.json
+    # Download and parse script_list.json with better error handling
     debug_log "Downloading script_list.json"
-    local json_content=$(curl -s "https://raw.githubusercontent.com/BrunoAFK/LSM/main/script_list.json")
+    local json_url="https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/$GITHUB_BRANCH/script_list.json"
+    debug_log "Attempting to download from: $json_url"
     
-    if [ -z "$json_content" ] || ! echo "$json_content" | jq '.' >/dev/null 2>&1; then
-        debug_log "ERROR: Failed to download or parse script_list.json"
-        echo -e "${RED}Error: Failed to download script list${NC}"
+    # Use curl with detailed error reporting
+    local json_content=$(curl -sS -w "\nHTTP_CODE:%{http_code}" "$json_url")
+    local http_code=$(echo "$json_content" | grep "HTTP_CODE:" | cut -d":" -f2)
+    json_content=$(echo "$json_content" | grep -v "HTTP_CODE:")
+    
+    debug_log "HTTP Response Code: $http_code"
+    debug_log "Response Content Length: ${#json_content}"
+    
+    # Check HTTP response
+    if [ "$http_code" != "200" ]; then
+        debug_log "ERROR: Failed to download script_list.json - HTTP $http_code"
+        echo -e "${RED}Error: Failed to download script list (HTTP $http_code)${NC}"
+        return 1
+    fi
+
+    # Validate JSON content
+    if ! echo "$json_content" | jq '.' >/dev/null 2>&1; then
+        debug_log "ERROR: Invalid JSON content"
+        debug_log "JSON Content (first 100 chars): ${json_content:0:100}"
+        echo -e "${RED}Error: Invalid JSON format in script list${NC}"
         return 1
     fi
 
     # Save cleaned JSON
     echo "$json_content" > "$SCRIPT_LIST_FILE"
-
-    debug_log "JSON content cleaned and saved"
+    debug_log "JSON content successfully validated and saved"
 
     # Prepare featured scripts list
     debug_log "Preparing featured scripts list"
