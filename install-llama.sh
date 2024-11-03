@@ -20,7 +20,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.1.8"
+VERSION="2.0.0"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -31,11 +31,6 @@ DEBUG=true # Set to true to enable debug output
 #------------------------------------------------------------------------------
 # Core Error Handling Functions
 #------------------------------------------------------------------------------
-# handle_error: Manages script failures and provides debug information
-# Parameters:
-#   $1 - Exit code from failed command
-#   $2 - Line number where error occurred
-# Add this function near the top of the script
 handle_error() {
     local exit_code=$1
     local line_number=$2
@@ -80,6 +75,7 @@ cleanup_temp_files() {
     set -e
 }
 
+# Set up error handling
 trap 'cleanup_temp_files' EXIT
 trap 'handle_error $? $LINENO' ERR
 
@@ -94,10 +90,6 @@ REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
 #------------------------------------------------------------------------------
 # Utility Functions
 #------------------------------------------------------------------------------
-# debug_log: Handles debug output when DEBUG=true
-# Parameters:
-#   $1 - Debug message to log
-# Add this helper function after the color definitions
 debug_log() {
     if [ "$DEBUG" = true ]; then
         echo -e "${BLUE}DEBUG: $1${NC}" >&2 # Write to stderr
@@ -105,7 +97,6 @@ debug_log() {
     fi
 }
 
-# Add this helper function after the debug_log function
 print_section_header() {
     local title=$1
     if [ "$DEBUG" = true ]; then
@@ -115,34 +106,114 @@ print_section_header() {
 }
 
 #------------------------------------------------------------------------------
-# Installation Prerequisites
+# Package Installation Functions
 #------------------------------------------------------------------------------
-# check_requirements: Verifies all required system tools are available
-# Checks for: git, curl
-# Provides installation instructions if missing
-# Add this function after the color definitions
-check_requirements() {
-    print_section_header "Checking Requirements"
-    if ! command -v git &>/dev/null; then
-        echo -e "${RED}Error: git is not installed${NC}"
-        echo "Please install git first:"
-        echo "  For Ubuntu/Debian: sudo apt-get install git"
-        echo "  For MacOS: brew install git"
-        exit 1
+install_package() {
+    local package=$1
+    debug_log "Attempting to install $package"
+    echo -e "${YELLOW}$package is not installed. Attempting to install...${NC}"
+
+    if command -v apt-get >/dev/null 2>&1; then
+        debug_log "Using apt-get to install $package"
+        if ! sudo apt-get update 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
+            debug_log "Failed to update apt"
+            return 1
+        fi
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $package 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
+            debug_log "Failed to install $package"
+            return 1
+        fi
+    elif command -v yum >/dev/null 2>&1; then
+        debug_log "Using yum to install $package"
+        if ! sudo yum install -y $package 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
+            debug_log "Failed to install $package"
+            return 1
+        fi
+    elif command -v dnf >/dev/null 2>&1; then
+        debug_log "Using dnf to install $package"
+        if ! sudo dnf install -y $package 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
+            debug_log "Failed to install $package"
+            return 1
+        fi
+    elif command -v brew >/dev/null 2>&1; then
+        debug_log "Using brew to install $package"
+        if ! brew install $package 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
+            debug_log "Failed to install $package"
+            return 1
+        fi
+    else
+        debug_log "ERROR: No supported package manager found"
+        echo -e "${RED}Error: Could not install $package automatically${NC}"
+        echo "Please install $package manually according to your system's package manager."
+        return 1
     fi
 
-    if ! command -v curl &>/dev/null; then
-        echo -e "${RED}Error: curl is not installed${NC}"
-        echo "Please install curl first:"
-        echo "  For Ubuntu/Debian: sudo apt-get install curl"
-        echo "  For MacOS: brew install curl"
-        exit 1
+    # Verify installation
+    if ! command -v $package >/dev/null 2>&1; then
+        debug_log "ERROR: $package installation verification failed"
+        echo -e "${RED}Error: Failed to install $package${NC}"
+        return 1
     fi
+    debug_log "$package installation verified successfully"
+    return 0
 }
 
-# check_repository: Validates GitHub repository accessibility
-# Ensures the LSM repository exists and is publicly accessible
-# Add this function after the color definitions
+ensure_requirements() {
+    print_section_header "Checking and Installing Requirements"
+    local required_packages=(jq dialog)
+    local missing_packages=()
+    local all_installed=true
+
+    # Check for git and curl first as they are essential
+    for cmd in git curl; do
+        if ! command -v $cmd &>/dev/null; then
+            echo -e "${RED}Error: $cmd is not installed${NC}"
+            echo "Please install $cmd first:"
+            echo "  For Ubuntu/Debian: sudo apt-get install $cmd"
+            echo "  For MacOS: brew install $cmd"
+            exit 1
+        fi
+    done
+
+    # Check for other required packages
+    for package in "${required_packages[@]}"; do
+        if ! command -v $package &>/dev/null; then
+            debug_log "$package is not installed"
+            missing_packages+=("$package")
+            all_installed=false
+        else
+            debug_log "$package is already installed"
+        fi
+    done
+
+    # If all packages are installed, return early
+    if [ "$all_installed" = true ]; then
+        debug_log "All required packages are already installed"
+        return 0
+    fi
+
+    # Install missing packages
+    for package in "${missing_packages[@]}"; do
+        if ! install_package "$package"; then
+            echo -e "${RED}Failed to install $package. Please install it manually:${NC}"
+            echo "  For Ubuntu/Debian: sudo apt-get install $package"
+            echo "  For MacOS: brew install $package"
+            echo "  For CentOS/RHEL: sudo yum install $package"
+            echo "  For Fedora: sudo dnf install $package"
+            exit 1
+        fi
+        echo -e "${GREEN}Successfully installed $package${NC}"
+    done
+
+    # Add a small delay after installation
+    sleep 2
+    debug_log "All required packages are now installed"
+    return 0
+}
+
+#------------------------------------------------------------------------------
+# Repository Functions
+#------------------------------------------------------------------------------
 check_repository() {
     print_section_header "Checking Repository"
     if ! curl --output /dev/null --silent --head --fail "https://github.com/$GITHUB_USER/$GITHUB_REPO"; then
@@ -155,12 +226,6 @@ check_repository() {
     fi
 }
 
-#------------------------------------------------------------------------------
-# Installation Setup Functions
-#------------------------------------------------------------------------------
-# setup_temp_dir: Creates temporary working directory and files
-# Sets up cleanup handlers for proper resource management
-# Add this function after the color definitions
 setup_temp_dir() {
     print_section_header "Setting up Temporary Directory"
     TEMP_DIR=$(mktemp -d)
@@ -171,9 +236,6 @@ setup_temp_dir() {
     trap 'cleanup_temp_files' EXIT INT TERM
 }
 
-# clone_repository: Retrieves latest LSM code from GitHub
-# Clones repository to temporary directory for installation
-# Add this function after the color definitions
 clone_repository() {
     print_section_header "Cloning Repository"
     if ! git clone "$REPO_URL" "$TEMP_DIR/repo" 2>/dev/null; then
@@ -182,9 +244,6 @@ clone_repository() {
     fi
 }
 
-# create_directories: Sets up LSM installation directory structure
-# Creates required directories with appropriate permissions
-# Add this function after the color definitions
 create_directories() {
     print_section_header "Creating Installation Directories"
     sudo mkdir -p "$INSTALL_DIR"
@@ -198,132 +257,33 @@ declare -A script_descriptions
 #------------------------------------------------------------------------------
 # Script Selection Interface
 #------------------------------------------------------------------------------
-# select_scripts: Provides interactive script selection via dialog
-# Features:
-# - Automatic dialog installation if needed
-# - Script description parsing
-# - "Install All" option
-# - Individual script selection
-# Add this function after the color definitions
 select_scripts() {
     print_section_header "Script Selection"
     local scripts_dir="$TEMP_DIR/repo/scripts"
     debug_log "Starting select_scripts function"
     debug_log "Scripts directory: $scripts_dir"
 
-    # Check if directory exists and is not empty
-    if [ ! -d "$scripts_dir" ]; then
-        debug_log "ERROR: Scripts directory not found: $scripts_dir"
-        echo -e "${YELLOW}Warning: Scripts directory not found${NC}"
-        return 1
-    fi
-
-    # Count number of files
-    file_count=$(find "$scripts_dir" -type f -name "*" | wc -l)
-    debug_log "Found $file_count files in scripts directory"
-
-    if [ "$file_count" -eq 0 ]; then
-        debug_log "ERROR: No scripts found in repository"
-        echo -e "${YELLOW}Warning: No scripts found in repository${NC}"
-        return 1
-    fi
-
-    # Check if dialog is installed
-    debug_log "Checking for dialog installation"
-    if ! command -v dialog >/dev/null 2>&1; then
-        debug_log "Dialog not found, attempting installation"
-        echo -e "${YELLOW}Dialog is not installed. Attempting to install...${NC}"
-
-        if command -v apt-get >/dev/null 2>&1; then
-            debug_log "Using apt-get to install dialog"
-            # Add error checking and output capture
-            if ! sudo apt-get update 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
-                debug_log "Failed to update apt"
-                exit 1
-            fi
-            debug_log "apt-get update completed"
-
-            if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y dialog 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
-                debug_log "Failed to install dialog"
-                exit 1
-            fi
-            debug_log "dialog installation completed"
-        elif command -v yum >/dev/null 2>&1; then
-            debug_log "Using yum to install dialog"
-            if ! sudo yum install -y dialog 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
-                debug_log "Failed to install dialog"
-                exit 1
-            fi
-        elif command -v dnf >/dev/null 2>&1; then
-            debug_log "Using dnf to install dialog"
-            if ! sudo dnf install -y dialog 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
-                debug_log "Failed to install dialog"
-                exit 1
-            fi
-        elif command -v brew >/dev/null 2>&1; then
-            debug_log "Using brew to install dialog"
-            if ! brew install dialog 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
-                debug_log "Failed to install dialog"
-                exit 1
-            fi
-        else
-            debug_log "ERROR: No supported package manager found"
-            echo -e "${RED}Error: Could not install dialog automatically${NC}"
-            exit 1
-        fi
-
-        # Verify dialog installation
-        if ! command -v dialog >/dev/null 2>&1; then
-            debug_log "ERROR: Dialog installation verification failed"
-            echo -e "${RED}Error: Failed to install dialog${NC}"
-            exit 1
-        fi
-        debug_log "Dialog installation verified successfully"
-    fi
-
-    # Add a small delay after dialog installation
-    sleep 2
-    debug_log "Proceeding with dialog command preparation"
-
-    # Prepare script list for dialog
-    >"$TEMP_FILE"
-    local script_num=1
-    while IFS= read -r -d '' script; do
-        script_basename=$(basename "$script")
-        debug_log "Processing script: $script_basename"
-
-        description="No description available"
-        if [ -f "$script" ]; then
-            desc=$(head -n 20 "$script" | grep -i "^#.*description:" | head -n 1 | sed 's/^#[ ]*[Dd]escription:[ ]*//')
-            [ -n "$desc" ] && description=${desc:0:60}
-        fi
-        printf '%s\n' "$script_basename" "\"$description\"" "off" >>"$TEMP_FILE"
-        ((script_num++))
-    done < <(find "$scripts_dir" -type f -name "*" -print0)
-
-    debug_log "Total scripts processed: $((script_num - 1))"
-    local height=$((script_num + 10))
-    [[ $height -gt 40 ]] && height=40
-    debug_log "Dialog height calculated as: $height"
-
-    # Print debug messages before launching dialog
-    debug_log "Launching dialog command..."
-    echo -e "${BLUE}Launching dialog...${NC}"
-
-    # Create a temporary file for the full script list
-    local FULL_LIST_FILE=$(mktemp)
+    # Create temporary files
+    local SCRIPT_LIST_FILE=$(mktemp)
+    local FEATURED_LIST_FILE=$(mktemp)
+    local ALL_LIST_FILE=$(mktemp)
     local FILTERED_LIST_FILE=$(mktemp)
 
-    # Prepare the full script list
-    while IFS= read -r -d '' script; do
-        script_basename=$(basename "$script")
-        description="No description available"
-        if [ -f "$script" ]; then
-            desc=$(head -n 20 "$script" | grep -i "^#.*description:" | head -n 1 | sed 's/^#[ ]*[Dd]escription:[ ]*//')
-            [ -n "$desc" ] && description=${desc:0:60}
-        fi
-        printf '%s\n' "$script_basename" "\"$description\"" "off" >>"$FULL_LIST_FILE"
-    done < <(find "$scripts_dir" -type f -name "*" -print0)
+    # Download and parse script_list.json
+    debug_log "Downloading script_list.json"
+    if ! curl -s "https://raw.githubusercontent.com/BrunoAFK/LSM/refs/heads/dev/script_list.txt" > "$SCRIPT_LIST_FILE"; then
+        debug_log "ERROR: Failed to download script_list.json"
+        echo -e "${RED}Error: Failed to download script list${NC}"
+        return 1
+    fi
+
+    # Prepare featured scripts list
+    debug_log "Preparing featured scripts list"
+    jq -r '.scripts[] | select(.rank | contains("Featured")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" > "$FEATURED_LIST_FILE"
+
+    # Prepare all scripts list
+    debug_log "Preparing all scripts list"
+    jq -r '.scripts[] | select(.path | contains("./scripts/")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" > "$ALL_LIST_FILE"
 
     # Function to filter scripts based on search term
     filter_scripts() {
@@ -331,10 +291,10 @@ select_scripts() {
         local source_file="$2"
         local target_file="$3"
         
+        debug_log "Filtering scripts with search term: $search_term"
         if [ -z "$search_term" ]; then
             cp "$source_file" "$target_file"
         else
-            # Filter based on script name or description
             awk -v search="${search_term,,}" '
             {
                 if (NR % 3 == 1) script=$0;
@@ -350,91 +310,128 @@ select_scripts() {
         fi
     }
 
-    while true; do
-        # Show search dialog
-        search_term=$(dialog --title "Search Scripts" \
-            --backtitle "Llama Script Manager Installer v${VERSION}" \
-            --inputbox "Enter search term (leave empty to show all):" \
-            8 60 \
-            2>&1 >/dev/tty)
-        
-        dialog_status=$?
-        
-        # Handle cancel
-        if [ $dialog_status -ne 0 ]; then
-            debug_log "Search cancelled"
-            rm -f "$FULL_LIST_FILE" "$FILTERED_LIST_FILE"
-            return 1
-        fi
+    # Show Featured Scripts First
+    local featured_count=$(wc -l < "$FEATURED_LIST_FILE")
+    featured_count=$((featured_count / 3))
+    debug_log "Found $featured_count featured scripts"
 
-        # Filter scripts based on search term
-        filter_scripts "$search_term" "$FULL_LIST_FILE" "$FILTERED_LIST_FILE"
-
-        # Count filtered items
-        filtered_count=$(wc -l < "$FILTERED_LIST_FILE")
-        filtered_count=$((filtered_count / 3))
-        
-        if [ $filtered_count -eq 0 ]; then
-            dialog --msgbox "No scripts found matching: $search_term" 8 40
-            continue
-        fi
-
-        # Calculate dialog height
-        local height=$((filtered_count + 10))
+    if [ $featured_count -gt 0 ]; then
+        local height=$((featured_count + 10))
         [[ $height -gt 40 ]] && height=40
 
-        # Show script selection dialog with filtered results
-        if dialog --title "Script Selection" \
+        echo -e "${BLUE}Showing featured scripts...${NC}"
+        dialog --title "Featured Scripts" \
+            --backtitle "Llama Script Manager Installer v${VERSION}" \
+            --extra-button --extra-label "Next" \
+            --colors \
+            --checklist "\Zn\Z3Featured Scripts\Zn (use SPACE to select/unselect):" \
+            $height 100 $((height - 8)) \
+            --file "$FEATURED_LIST_FILE" \
+            2>"$DESC_FILE"
+
+        dialog_status=$?
+        
+        # Process featured selections
+        if [ $dialog_status -eq 0 ] || [ $dialog_status -eq 3 ]; then
+            debug_log "Processing featured script selections"
+            while IFS= read -r selected; do
+                selected=${selected//\"/}
+                if [ -n "$selected" ]; then
+                    SELECTED_SCRIPTS[$selected]=1
+                    debug_log "Selected featured script: $selected"
+                fi
+            done < "$DESC_FILE"
+        elif [ $dialog_status -ne 3 ]; then
+            debug_log "Featured script selection cancelled"
+            return 1
+        fi
+    fi
+
+    # Main Market Loop
+    while true; do
+        echo -e "${BLUE}Showing script marketplace...${NC}"
+        # Show script selection dialog with all scripts
+        if dialog --title "Script Market" \
             --backtitle "Llama Script Manager Installer v${VERSION}" \
             --extra-button --extra-label "Install All" \
-            --extra-button --extra-label "New Search" \
-            --checklist "Found $filtered_count scripts (use SPACE to select/unselect):" \
-            $height 100 $((height - 8)) \
-            --file "$FILTERED_LIST_FILE" \
+            --extra-button --extra-label "Search" \
+            --ok-label "Install Selected" \
+            --cancel-label "Exit" \
+            --colors \
+            --checklist "\Zn\Z2Available Scripts\Zn (use SPACE to select/unselect):" \
+            40 100 32 \
+            --file "$ALL_LIST_FILE" \
             2>"$DESC_FILE"; then
             
             dialog_status=$?
+            debug_log "Market dialog returned status: $dialog_status"
             
             case $dialog_status in
                 0) # Normal selection
-                    debug_log "Normal selection completed"
+                    debug_log "Processing normal script selection"
+                    while IFS= read -r selected; do
+                        selected=${selected//\"/}
+                        if [ -n "$selected" ]; then
+                            SELECTED_SCRIPTS[$selected]=1
+                            debug_log "Selected script: $selected"
+                        fi
+                    done < "$DESC_FILE"
                     break
                     ;;
                 3) # Install All
                     debug_log "Install All selected"
-                    # Process all scripts from the filtered list
                     while IFS= read -r line; do
                         if [ $((++count % 3)) -eq 1 ]; then
                             SELECTED_SCRIPTS["$line"]=1
+                            debug_log "Adding all script: $line"
                         fi
-                    done < "$FILTERED_LIST_FILE"
+                    done < "$ALL_LIST_FILE"
                     break
                     ;;
-                4) # New Search
-                    debug_log "New search requested"
+                4) # Search
+                    debug_log "Search requested"
+                    search_term=$(dialog --title "Search Scripts" \
+                        --backtitle "Llama Script Manager Installer v${VERSION}" \
+                        --inputbox "Enter search term (leave empty to show all):" \
+                        8 60 \
+                        2>&1 >/dev/tty)
+                    
+                    if [ $? -eq 0 ]; then
+                        debug_log "Searching for: $search_term"
+                        filter_scripts "$search_term" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
+                        cp "$FILTERED_LIST_FILE" "$ALL_LIST_FILE"
+                    else
+                        debug_log "Search cancelled"
+                    fi
                     continue
                     ;;
                 *) # Cancel
-                    debug_log "Selection cancelled"
-                    rm -f "$FULL_LIST_FILE" "$FILTERED_LIST_FILE"
-                    return 1
+                    debug_log "Market selection cancelled"
+                    if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
+                        return 1
+                    fi
+                    break
                     ;;
             esac
+        else
+            debug_log "Market dialog cancelled"
+            if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
+                return 1
+            fi
+            break
         fi
     done
 
     # Clean up temporary files
-    rm -f "$FULL_LIST_FILE" "$FILTERED_LIST_FILE"
+    rm -f "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
+    
+    debug_log "Script selection completed with ${#SELECTED_SCRIPTS[@]} scripts selected"
+    return 0
 }
 
 #------------------------------------------------------------------------------
 # Installation Functions
 #------------------------------------------------------------------------------
-# copy_files: Handles the actual installation of selected scripts
-# - Copies main LSM script
-# - Installs selected utility scripts
-# - Sets appropriate permissions
-# Add this function after the color definitions
 copy_files() {
     print_section_header "Copying Files"
     debug_log "Number of selected scripts: ${#SELECTED_SCRIPTS[@]}"
@@ -445,9 +442,12 @@ copy_files() {
         echo -e "${RED}Error: No scripts selected for installation${NC}"
         exit 1
     fi
+    
     # List all selected scripts for verification
+    echo -e "${BLUE}Installing selected scripts:${NC}"
     for script_name in "${!SELECTED_SCRIPTS[@]}"; do
         debug_log "Script marked for installation: $script_name"
+        echo -e "${GREEN}- $script_name${NC}"
     done
 
     # Copy main script
@@ -473,20 +473,16 @@ copy_files() {
         done
     else
         debug_log "ERROR: Scripts directory not found: $TEMP_DIR/repo/scripts"
+        echo -e "${RED}Error: Scripts directory not found${NC}"
+        exit 1
     fi
 }
 
-# create_symlink: Creates system-wide command access
-# Links LSM into standard PATH for easy access
-# Add this function after the color definitions
 create_symlink() {
     print_section_header "Creating Symlink"
     sudo ln -sf "$INSTALL_DIR/llama" "$BIN_DIR/llama"
 }
 
-# cleanup_dialog: Removes dialog package if it was auto-installed
-# Cleanup happens after script selection is complete
-# Add this function after the color definitions
 cleanup_dialog() {
     print_section_header "Cleaning Up Dialog"
     if command -v dialog >/dev/null 2>&1; then
@@ -506,15 +502,12 @@ cleanup_dialog() {
 #------------------------------------------------------------------------------
 # Main Installation Process
 #------------------------------------------------------------------------------
-# main: Orchestrates the entire installation process
-# Executes all installation steps in sequence with error handling
-# Add this function after the color definitions
 main() {
     debug_log "Starting main installation process"
     echo -e "${GREEN}Starting Llama Script Manager Installation...${NC}"
 
-    debug_log "Checking requirements"
-    check_requirements
+    debug_log "Checking and installing requirements"
+    ensure_requirements
 
     debug_log "Checking repository"
     check_repository
@@ -530,6 +523,11 @@ main() {
 
     debug_log "Starting script selection"
     select_scripts
+    if [ $? -ne 0 ]; then
+        debug_log "Script selection cancelled or failed"
+        echo -e "${YELLOW}Installation cancelled by user${NC}"
+        exit 0
+    fi
     debug_log "Script selection completed"
 
     debug_log "Copying files"
@@ -556,4 +554,5 @@ main() {
     exit 0
 }
 
+# Start the installation
 main
