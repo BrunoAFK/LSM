@@ -694,15 +694,17 @@ select_scripts() {
             done
         fi
 
+        # Always proceed to all scripts dialog regardless of featured status
         break
     done
 
     # All Scripts Dialog with Search
-    local current_list="$ALL_LIST_FILE"
-    local search_active=false
-    local last_search=""
+    current_list="$ALL_LIST_FILE"
+    search_active=false
+    last_search=""
 
     while true; do
+        debug_log "Showing all scripts dialog with current_list: $current_list"
         mark_selections "$current_list"
 
         dialog --title "Script Market" \
@@ -721,31 +723,43 @@ select_scripts() {
         debug_log "Market dialog status: $market_status"
 
         case $market_status in
-        0)
-            while IFS= read -r selected; do
-                selected=${selected//\"/}
-                if [ -n "$selected" ]; then
-                    SELECTED_SCRIPTS[$selected]=1
-                    debug_log "Added to final selection: $selected"
-                fi
-            done <"$CURRENT_SELECTIONS"
+        0) 
+            debug_log "Processing final selections from all scripts dialog"
+            if [ -s "$CURRENT_SELECTIONS" ]; then
+                eval "selected_array=($(cat "$CURRENT_SELECTIONS"))"
+                for selected in "${selected_array[@]}"; do
+                    selected=${selected//\"/}
+                    if [ -n "$selected" ]; then
+                        SELECTED_SCRIPTS[$selected]=1
+                        debug_log "Added to final selection: $selected"
+                    fi
+                done
+            fi
+            debug_log "Final selection complete, returning with success"
             return 0
             ;;
-        1)
+        1) 
+            debug_log "Back button pressed"
             if [ ${#SELECTED_SCRIPTS[@]} -gt 0 ]; then
+                debug_log "Returning with existing selections"
                 return 0
             else
+                debug_log "No selections made, returning with failure"
                 return 1
             fi
             ;;
-        2)
+        2) 
+            debug_log "Search button pressed"
             local search_term=$(dialog --title "Search Scripts" \
                 --backtitle "Llama Script Manager Installer v${VERSION}" \
                 --inputbox "Enter search term (leave empty to show all):" \
                 8 60 \
                 2>"$DESC_FILE")
 
-            if [ $? -eq 0 ]; then
+            local search_status=$?
+            debug_log "Search dialog status: $search_status"
+
+            if [ $search_status -eq 0 ]; then
                 search_term=$(cat "$DESC_FILE")
                 if [ -n "$search_term" ]; then
                     debug_log "Searching for: '$search_term'"
@@ -754,22 +768,38 @@ select_scripts() {
                     search_active=true
                     last_search="$search_term"
                 else
+                    debug_log "Empty search term, showing all scripts"
                     current_list="$ALL_LIST_FILE"
                     search_active=false
                     last_search=""
                 fi
             fi
+            continue
             ;;
-        3)
+        3) 
+            debug_log "Show All button pressed"
             current_list="$ALL_LIST_FILE"
             search_active=false
             last_search=""
+            continue
             ;;
-        *)
-            debug_log "Unknown dialog return code: $market_status"
+        255) 
+            debug_log "ESC pressed, treating as Back button"
             if [ ${#SELECTED_SCRIPTS[@]} -gt 0 ]; then
+                debug_log "Returning with existing selections"
                 return 0
             else
+                debug_log "No selections made, returning with failure"
+                return 1
+            fi
+            ;;
+        *) 
+            debug_log "Unknown dialog return code: $market_status"
+            if [ ${#SELECTED_SCRIPTS[@]} -gt 0 ]; then
+                debug_log "Returning with existing selections"
+                return 0
+            else
+                debug_log "No selections made, returning with failure"
                 return 1
             fi
             ;;
