@@ -3,10 +3,10 @@
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
 # Github: github.com/brunoafk
-# Version: 1.1.1
+# Version: 1.1.2
 # Description: Enhanced script manager with development and production environment support
 
-VERSION="1.1.1"
+VERSION="1.1.2"
 GITHUB_USER="BrunoAFK"
 GITHUB_REPO="LSM"
 GITHUB_BRANCH="main"
@@ -132,16 +132,27 @@ install_from_github() {
     sudo mkdir -p "$install_dir"
     sudo mkdir -p "$scripts_dir"
 
-    # Clone the entire repository
+    # Clone the repository
     git clone "https://github.com/$GITHUB_USER/$GITHUB_REPO.git" "$TEMP_DIR/repo"
 
     if [ -d "$TEMP_DIR/repo" ]; then
+        # Update main script
         sudo cp "$TEMP_DIR/repo/llama" "$install_dir/llama"
         sudo chmod +x "$install_dir/llama"
 
-        if [ -d "$TEMP_DIR/repo/scripts" ]; then
-            sudo cp -r "$TEMP_DIR/repo/scripts/"* "$scripts_dir/"
-            find "$scripts_dir" -type f -exec sudo chmod +x {} \;
+        # Only update existing scripts
+        if [ -d "$TEMP_DIR/repo/scripts" ] && [ -d "$scripts_dir" ]; then
+            # Loop through existing scripts and update only those
+            for existing_script in "$scripts_dir"/*; do
+                if [ -f "$existing_script" ]; then
+                    script_name=$(basename "$existing_script")
+                    if [ -f "$TEMP_DIR/repo/scripts/$script_name" ]; then
+                        echo "Updating script: $script_name"
+                        sudo cp "$TEMP_DIR/repo/scripts/$script_name" "$scripts_dir/$script_name"
+                        sudo chmod +x "$scripts_dir/$script_name"
+                    fi
+                fi
+            done
         fi
     else
         echo "Failed to clone repository"
@@ -208,7 +219,44 @@ show_status() {
     fi
 }
 
-# Check for updates and install them
+# Add these helper functions
+get_remote_version() {
+    local version=""
+    # Try to get version from raw GitHub content
+    version=$(curl -s "$GITHUB_RAW_BASE/llama" | grep "^VERSION=" | cut -d'"' -f2)
+    echo "$version"
+}
+
+get_script_version() {
+    local script_path="$1"
+    local version=""
+    # Try to get version from script comments
+    version=$(head -n 20 "$script_path" | grep -i "^#.*version:" | head -n 1 | sed 's/^#[ ]*[Vv]ersion:[ ]*//')
+    echo "$version"
+}
+
+compare_versions() {
+    local version1=$1
+    local version2=$2
+    
+    # Convert versions to comparable numbers
+    local v1=(${version1//./ })
+    local v2=(${version2//./ })
+    
+    # Compare each part of the version
+    for i in {0..2}; do
+        if [ "${v1[$i]:-0}" -gt "${v2[$i]:-0}" ]; then
+            echo "1"  # version1 is newer
+            return
+        elif [ "${v1[$i]:-0}" -lt "${v2[$i]:-0}" ]; then
+            echo "-1" # version2 is newer
+            return
+        fi
+    done
+    echo "0"  # versions are equal
+}
+
+# Modify the update_script function
 update_script() {
     if is_dev_mode; then
         echo "Development mode: Installing from local files..."
@@ -217,11 +265,66 @@ update_script() {
         echo "Production mode: Checking for updates..."
         setup_temp_dir
 
-        if install_from_github; then
-            echo "Update completed successfully"
-        else
-            echo "Update failed"
+        # Check main script version
+        local remote_version=$(get_remote_version)
+        local current_version="$VERSION"
+        
+        if [ -z "$remote_version" ]; then
+            echo "Error: Could not fetch remote version"
             return 1
+        fi
+
+        echo "Current version: $current_version"
+        echo "Latest version: $remote_version"
+        
+        local version_compare=$(compare_versions "$current_version" "$remote_version")
+        
+        if [ "$version_compare" -eq "-1" ]; then
+            echo "Update available for main script"
+            if install_from_github; then
+                echo "Update completed successfully"
+            else
+                echo "Update failed"
+                return 1
+            fi
+        else
+            echo "Main script is up to date"
+        fi
+
+        # Check individual scripts
+        read -r install_dir scripts_dir <<<"$(get_directories)"
+        if [ -d "$scripts_dir" ]; then
+            echo "Checking individual scripts for updates..."
+            local updates_needed=false
+            
+            for existing_script in "$scripts_dir"/*; do
+                if [ -f "$existing_script" ]; then
+                    local script_name=$(basename "$existing_script")
+                    local current_script_version=$(get_script_version "$existing_script")
+                    local remote_script_version=$(curl -s "$GITHUB_RAW_BASE/scripts/$script_name" | get_script_version "/dev/stdin")
+                    
+                    if [ -n "$remote_script_version" ] && [ -n "$current_script_version" ]; then
+                        echo "Checking $script_name (Current: $current_script_version, Remote: $remote_script_version)"
+                        local script_version_compare=$(compare_versions "$current_script_version" "$remote_script_version")
+                        
+                        if [ "$script_version_compare" -eq "-1" ]; then
+                            echo "Update available for $script_name"
+                            updates_needed=true
+                            # Update individual script
+                            if curl -s "$GITHUB_RAW_BASE/scripts/$script_name" | sudo tee "$scripts_dir/$script_name" > /dev/null; then
+                                sudo chmod +x "$scripts_dir/$script_name"
+                                echo "Updated $script_name successfully"
+                            else
+                                echo "Failed to update $script_name"
+                            fi
+                        fi
+                    fi
+                fi
+            done
+            
+            if [ "$updates_needed" = false ]; then
+                echo "All scripts are up to date"
+            fi
         fi
     fi
 }
