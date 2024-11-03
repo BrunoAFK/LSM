@@ -46,19 +46,59 @@ handle_error() {
 }
 
 cleanup_temp_files() {
+    # Disable error handling during cleanup
+    set +e
+    trap - ERR
+    
+    debug_log "Starting cleanup of temporary files"
     echo -e "${YELLOW}Cleaning up temporary files...${NC}"
     
-    # Remove temporary directory and its contents if they exist
-    [ -d "$TEMP_DIR" ] && rm -rf "$TEMP_DIR" 2>/dev/null
-    [ -f "$TEMP_FILE" ] && rm -f "$TEMP_FILE" 2>/dev/null
-    [ -f "$DESC_FILE" ] && rm -f "$DESC_FILE" 2>/dev/null
-    [ -f "/tmp/dialog_debug.log" ] && rm -f "/tmp/dialog_debug.log" 2>/dev/null
+    # Store the original exit code
+    local exit_code=$?
     
-    # Additional temporary files created during script selection
-    [ -f "$SCRIPT_LIST_FILE" ] && rm -f "$SCRIPT_LIST_FILE" 2>/dev/null
-    [ -f "$FEATURED_LIST_FILE" ] && rm -f "$FEATURED_LIST_FILE" 2>/dev/null
-    [ -f "$ALL_LIST_FILE" ] && rm -f "$ALL_LIST_FILE" 2>/dev/null
-    [ -f "$FILTERED_LIST_FILE" ] && rm -f "$FILTERED_LIST_FILE" 2>/dev/null
+    # Remove temporary directory and its contents
+    if [ -d "$TEMP_DIR" ]; then
+        debug_log "Removing temporary directory: $TEMP_DIR"
+        rm -rf "$TEMP_DIR" 2>/dev/null || {
+            debug_log "Failed to remove directory: $TEMP_DIR"
+            sudo rm -rf "$TEMP_DIR" 2>/dev/null
+        }
+    fi
+    
+    # Clean up all temp files created during this session
+    for tmp_file in $(find /tmp -maxdepth 1 -name "tmp.*" -user $(id -u) -mmin -5); do
+        debug_log "Cleaning up temporary file: $tmp_file"
+        rm -f "$tmp_file" 2>/dev/null || {
+            debug_log "Failed to remove file: $tmp_file"
+            sudo rm -f "$tmp_file" 2>/dev/null
+        }
+    done
+    
+    # Remove specific temporary files
+    for file in "$TEMP_FILE" "$DESC_FILE" "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"; do
+        if [ -f "$file" ]; then
+            debug_log "Removing temporary file: $file"
+            rm -f "$file" 2>/dev/null || {
+                debug_log "Failed to remove file: $file"
+                sudo rm -f "$file" 2>/dev/null
+            }
+        fi
+    done
+    
+    # Remove debug log if DEBUG is true
+    if [ "$DEBUG" = true ] && [ -f "/tmp/dialog_debug.log" ]; then
+        debug_log "Removing dialog debug log"
+        rm -f "/tmp/dialog_debug.log" 2>/dev/null || sudo rm -f "/tmp/dialog_debug.log"
+    fi
+    
+    debug_log "Cleanup completed"
+    
+    # Re-enable error handling
+    set -e
+    trap 'handle_error $? $LINENO' ERR
+    
+    # Return the original exit code
+    return $exit_code
 }
 
 # Update trap setup
@@ -257,23 +297,20 @@ select_scripts() {
 
     # Download and parse script_list.json
     debug_log "Downloading script_list.json"
-    if ! curl -s "https://raw.githubusercontent.com/BrunoAFK/LSM/refs/heads/dev/script_list.txt" > "$SCRIPT_LIST_FILE"; then
+    local json_content=$(curl -s "https://raw.githubusercontent.com/BrunoAFK/LSM/refs/heads/dev/script_list.txt" | \
+                        sed -E 's/,(\s*[}\]])/\1/g' | \
+                        jq '.')
+    
+    if [ -z "$json_content" ]; then
         debug_log "ERROR: Failed to download script_list.json"
         echo -e "${RED}Error: Failed to download script list${NC}"
         return 1
     fi
 
-    # Clean the JSON (remove trailing commas and pretty print)
-    debug_log "Cleaning JSON data"
-    # Remove trailing commas and format JSON
-    sed -i 's/,[ ]*}/}/g; s/,[ ]*\]/]/g' "$SCRIPT_LIST_FILE"
+    # Save cleaned JSON
+    echo "$json_content" > "$SCRIPT_LIST_FILE"
 
-    # Verify JSON is valid
-    if ! jq '.' "$SCRIPT_LIST_FILE" >/dev/null 2>&1; then
-        debug_log "ERROR: Invalid JSON data"
-        echo -e "${RED}Error: Invalid script list format${NC}"
-        return 1
-    fi
+    debug_log "JSON content cleaned and saved"
 
     # Prepare featured scripts list
     debug_log "Preparing featured scripts list"
