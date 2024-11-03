@@ -793,6 +793,33 @@ cleanup_dialog() {
     fi
 }
 
+test_configuration() {
+    print_section_header "Testing Configuration"
+    
+    debug_log "Testing llama executable"
+    if ! /usr/local/bin/llama --version >/dev/null 2>&1; then
+        debug_log "ERROR: llama executable test failed"
+        return 1
+    fi
+    
+    # Test script paths
+    debug_log "Testing script paths"
+    status_output=$(/usr/local/bin/llama status)
+    debug_log "Status output: $status_output"
+    
+    if ! echo "$status_output" | grep -q "$INSTALL_DIR"; then
+        debug_log "ERROR: Incorrect installation directory"
+        return 1
+    fi
+    
+    if ! echo "$status_output" | grep -q "$INSTALL_DIR/scripts"; then
+        debug_log "ERROR: Incorrect scripts directory"
+        return 1
+    fi
+    
+    return 0
+}
+
 #------------------------------------------------------------------------------
 # Main Installation Process
 #------------------------------------------------------------------------------
@@ -835,6 +862,13 @@ main() {
     if [ ! -L "/usr/local/bin/llama" ]; then
         debug_log "ERROR: Symlink not created"
         echo -e "${RED}Error: Symlink creation failed${NC}"
+        exit 1
+    fi
+
+    debug_log "Testing configuration"
+    if ! test_configuration; then
+        debug_log "ERROR: Configuration test failed"
+        echo -e "${RED}Error: Configuration test failed${NC}"
         exit 1
     fi
 
