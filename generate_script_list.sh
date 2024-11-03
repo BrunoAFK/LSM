@@ -2,7 +2,7 @@
 
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Description: Generates a list of scripts with their descriptions and ranks
-# Version: 1.6
+# Version: 1.7
 
 DEBUG=true  # Set to true to enable debugging
 OUTPUT_FILE="./script_list.json"
