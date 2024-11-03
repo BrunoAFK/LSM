@@ -665,7 +665,7 @@ select_scripts() {
         local featured_status=$?
         debug_log "Featured dialog status: $featured_status"
 
-        case $market_status in
+        case $featured_status in
             1 | 255) # Exit or ESC
                 debug_log "Exit selected or ESC pressed"
                 if [ ${#SELECTED_SCRIPTS[@]} -gt 0 ]; then
