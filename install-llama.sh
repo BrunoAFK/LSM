@@ -408,203 +408,7 @@ declare -A script_descriptions
 #------------------------------------------------------------------------------
 # Script Selection Interface
 #------------------------------------------------------------------------------
-select_scriptsB() {
-    print_section_header "Script Selection"
-    local scripts_dir="$TEMP_DIR/repo/scripts"
-    debug_log "Starting select_scripts function"
-    debug_log "Scripts directory: $scripts_dir"
 
-    # Create temporary files
-    local SCRIPT_LIST_FILE=$(mktemp)
-    local FEATURED_LIST_FILE=$(mktemp)
-    local ALL_LIST_FILE=$(mktemp)
-    local FILTERED_LIST_FILE=$(mktemp)
-
-    # Download and parse script_list.json with better error handling
-    debug_log "Downloading script_list.json"
-    local json_url="https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/$GITHUB_BRANCH/script_list.json"
-    debug_log "Attempting to download from: $json_url"
-
-    # Use curl with detailed error reporting
-    local json_content=$(curl -sS -w "\nHTTP_CODE:%{http_code}" "$json_url")
-    local http_code=$(echo "$json_content" | grep "HTTP_CODE:" | cut -d":" -f2)
-    json_content=$(echo "$json_content" | grep -v "HTTP_CODE:")
-
-    debug_log "HTTP Response Code: $http_code"
-    debug_log "Response Content Length: ${#json_content}"
-    debug_log "Response Content: $json_content"
-
-    # Check HTTP response
-    if [ "$http_code" != "200" ]; then
-        debug_log "ERROR: Failed to download script_list.json - HTTP $http_code"
-        debug_log "Full Response: $json_content"
-        echo -e "${RED}Error: Failed to download script list (HTTP $http_code)${NC}"
-        return 1
-    fi
-
-    # Validate JSON content
-    if ! echo "$json_content" | jq '.' >/dev/null 2>&1; then
-        debug_log "ERROR: Invalid JSON content"
-        debug_log "JSON Content (first 100 chars): ${json_content:0:100}"
-        echo -e "${RED}Error: Invalid JSON format in script list${NC}"
-        return 1
-    fi
-
-    # Save cleaned JSON
-    echo "$json_content" >"$SCRIPT_LIST_FILE"
-    debug_log "JSON content successfully validated and saved"
-
-    # Prepare featured scripts list
-    debug_log "Preparing featured scripts list"
-    jq -r '.scripts[] | select(.rank | contains("Featured")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" >"$FEATURED_LIST_FILE"
-
-    # Prepare all scripts list
-    debug_log "Preparing all scripts list"
-    jq -r '.scripts[] | select(.path | contains("./scripts/")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" >"$ALL_LIST_FILE"
-
-    # Function to filter scripts based on search term
-    filter_scripts() {
-        local search_term="$1"
-        local source_file="$2"
-        local target_file="$3"
-
-        debug_log "Filtering scripts with search term: $search_term"
-        if [ -z "$search_term" ]; then
-            cp "$source_file" "$target_file"
-        else
-            awk -v search="${search_term,,}" '
-            {
-                if (NR % 3 == 1) script=$0;
-                if (NR % 3 == 2) desc=$0;
-                if (NR % 3 == 0) {
-                    if (tolower(script) ~ search || tolower(desc) ~ search) {
-                        print prev2; print prev1; print $0;
-                    }
-                }
-                prev2=script;
-                prev1=desc;
-            }' "$source_file" >"$target_file"
-        fi
-    }
-
-    # Show Featured Scripts First
-    local featured_count=$(wc -l <"$FEATURED_LIST_FILE")
-    featured_count=$((featured_count / 3))
-    debug_log "Found $featured_count featured scripts"
-
-    if [ $featured_count -gt 0 ]; then
-        local height=$((featured_count + 10))
-        [[ $height -gt 40 ]] && height=40
-
-        echo -e "${BLUE}Showing featured scripts...${NC}"
-        dialog --title "Featured Scripts" \
-            --backtitle "Llama Script Manager Installer v${VERSION}" \
-            --extra-button --extra-label "Next" \
-            --colors \
-            --checklist "\Zn\Z3Featured Scripts\Zn (use SPACE to select/unselect):" \
-            $height 100 $((height - 8)) \
-            --file "$FEATURED_LIST_FILE" \
-            2>"$DESC_FILE"
-
-        dialog_status=$?
-
-        # Process featured selections
-        if [ $dialog_status -eq 0 ] || [ $dialog_status -eq 3 ]; then
-            debug_log "Processing featured script selections"
-            while IFS= read -r selected; do
-                selected=${selected//\"/}
-                if [ -n "$selected" ]; then
-                    SELECTED_SCRIPTS[$selected]=1
-                    debug_log "Selected featured script: $selected"
-                fi
-            done <"$DESC_FILE"
-        elif [ $dialog_status -ne 3 ]; then
-            debug_log "Featured script selection cancelled"
-            return 1
-        fi
-    fi
-
-    # Main Market Loop
-    while true; do
-        echo -e "${BLUE}Showing script marketplace...${NC}"
-        # Show script selection dialog with all scripts
-        if dialog --title "Script Market" \
-            --backtitle "Llama Script Manager Installer v${VERSION}" \
-            --extra-button --extra-label "Install All" \
-            --extra-button --extra-label "Search" \
-            --ok-label "Install Selected" \
-            --cancel-label "Exit" \
-            --colors \
-            --checklist "\Zn\Z2Available Scripts\Zn (use SPACE to select/unselect):" \
-            40 100 32 \
-            --file "$ALL_LIST_FILE" \
-            2>"$DESC_FILE"; then
-
-            dialog_status=$?
-            debug_log "Market dialog returned status: $dialog_status"
-
-            case $dialog_status in
-            0) # Normal selection
-                debug_log "Processing normal script selection"
-                while IFS= read -r selected; do
-                    selected=${selected//\"/}
-                    if [ -n "$selected" ]; then
-                        SELECTED_SCRIPTS[$selected]=1
-                        debug_log "Selected script: $selected"
-                    fi
-                done <"$DESC_FILE"
-                break
-                ;;
-            3) # Install All
-                debug_log "Install All selected"
-                while IFS= read -r line; do
-                    if [ $((++count % 3)) -eq 1 ]; then
-                        SELECTED_SCRIPTS["$line"]=1
-                        debug_log "Adding all script: $line"
-                    fi
-                done <"$ALL_LIST_FILE"
-                break
-                ;;
-            4) # Search
-                debug_log "Search requested"
-                search_term=$(dialog --title "Search Scripts" \
-                    --backtitle "Llama Script Manager Installer v${VERSION}" \
-                    --inputbox "Enter search term (leave empty to show all):" \
-                    8 60 \
-                    2>&1 >/dev/tty)
-
-                if [ $? -eq 0 ]; then
-                    debug_log "Searching for: $search_term"
-                    filter_scripts "$search_term" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
-                    cp "$FILTERED_LIST_FILE" "$ALL_LIST_FILE"
-                else
-                    debug_log "Search cancelled"
-                fi
-                continue
-                ;;
-            *) # Cancel
-                debug_log "Market selection cancelled"
-                if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
-                    return 1
-                fi
-                break
-                ;;
-            esac
-        else
-            debug_log "Market dialog cancelled"
-            if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
-                return 1
-            fi
-            break
-        fi
-    done
-
-    # Clean up temporary files
-    rm -f "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
-
-    debug_log "Script selection completed with ${#SELECTED_SCRIPTS[@]} scripts selected"
-    return 0
-}
 select_scripts() {
     print_section_header "Script Selection"
     local scripts_dir="$TEMP_DIR/repo/scripts"
@@ -617,47 +421,59 @@ select_scripts() {
     local ALL_LIST_FILE=$(mktemp)
     local FILTERED_LIST_FILE=$(mktemp)
 
-    # Download and parse script_list.json with better error handling
+    # Download and parse script_list.json
     debug_log "Downloading script_list.json"
     local json_url="https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/$GITHUB_BRANCH/script_list.json"
     debug_log "Attempting to download from: $json_url"
 
-    # Use curl with detailed error reporting
     local json_content=$(curl -sS -w "\nHTTP_CODE:%{http_code}" "$json_url")
     local http_code=$(echo "$json_content" | grep "HTTP_CODE:" | cut -d":" -f2)
     json_content=$(echo "$json_content" | grep -v "HTTP_CODE:")
 
-    debug_log "HTTP Response Code: $http_code"
-    debug_log "Response Content Length: ${#json_content}"
-    debug_log "Response Content: $json_content"
-
-    # Check HTTP response
-    if [ "$http_code" != "200" ]; then
-        debug_log "ERROR: Failed to download script_list.json - HTTP $http_code"
-        debug_log "Full Response: $json_content"
-        echo -e "${RED}Error: Failed to download script list (HTTP $http_code)${NC}"
+    # Validate download and JSON
+    if [ "$http_code" != "200" ] || ! echo "$json_content" | jq '.' >/dev/null 2>&1; then
+        debug_log "ERROR: Failed to download or parse script_list.json"
+        echo -e "${RED}Error: Failed to get script list${NC}"
         return 1
     fi
 
-    # Validate JSON content
-    if ! echo "$json_content" | jq '.' >/dev/null 2>&1; then
-        debug_log "ERROR: Invalid JSON content"
-        debug_log "JSON Content (first 100 chars): ${json_content:0:100}"
-        echo -e "${RED}Error: Invalid JSON format in script list${NC}"
-        return 1
-    fi
-
-    # Save cleaned JSON
     echo "$json_content" >"$SCRIPT_LIST_FILE"
-    debug_log "JSON content successfully validated and saved"
-
-    # Prepare featured scripts list
-    debug_log "Preparing featured scripts list"
+    
+    # Prepare lists
     jq -r '.scripts[] | select(.rank | contains("Featured")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" >"$FEATURED_LIST_FILE"
-
-    # Prepare all scripts list
-    debug_log "Preparing all scripts list"
     jq -r '.scripts[] | select(.path | contains("./scripts/")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" >"$ALL_LIST_FILE"
+
+    # First dialog: Choose installation mode
+    dialog --title "Installation Mode" \
+        --backtitle "Llama Script Manager Installer v${VERSION}" \
+        --yes-label "Install All" \
+        --no-label "Custom Selection" \
+        --yesno "\nChoose installation mode:\n\nInstall All: Install all available scripts\nCustom Selection: Choose which scripts to install" \
+        12 60
+
+    local mode_choice=$?
+    debug_log "Installation mode choice: $mode_choice"
+
+    case $mode_choice in
+        0) # Install All
+            debug_log "Installing all scripts"
+            local count=0
+            while IFS= read -r line; do
+                if [ $((++count % 3)) -eq 1 ]; then
+                    SELECTED_SCRIPTS["$line"]=1
+                    debug_log "Adding all script: $line"
+                fi
+            done <"$ALL_LIST_FILE"
+            return 0
+            ;;
+        1) # Custom Selection
+            # Continue to featured scripts
+            ;;
+        *) # Cancel
+            debug_log "Installation cancelled"
+            return 1
+            ;;
+    esac
 
     # Function to filter scripts based on search term
     filter_scripts() {
@@ -684,118 +500,110 @@ select_scripts() {
         fi
     }
 
-    # Show Featured Scripts First
+    # Show Featured Scripts
     local featured_count=$(wc -l <"$FEATURED_LIST_FILE")
     featured_count=$((featured_count / 3))
     debug_log "Found $featured_count featured scripts"
 
-    # Modified Featured Scripts Dialog
-    if [ $featured_count -gt 0 ]; then
+    if [ $featured_count -gt 0 ]; {
         local height=$((featured_count + 10))
         [[ $height -gt 40 ]] && height=40
 
-        echo -e "${BLUE}Showing featured scripts...${NC}"
         dialog --title "Featured Scripts" \
             --backtitle "Llama Script Manager Installer v${VERSION}" \
+            --no-ok \
             --extra-button --extra-label "Next" \
             --colors \
             --checklist "\Zn\Z3Featured Scripts\Zn (use SPACE to select/unselect):" \
-            $DIALOG_HEIGHT $DIALOG_WIDTH $((DIALOG_HEIGHT - 8)) \
+            $height 100 $((height - 8)) \
             --file "$FEATURED_LIST_FILE" \
             2>"$DESC_FILE"
 
-        dialog_status=$?
-        debug_log "Dialog status: $dialog_status"
+        local featured_status=$?
+        debug_log "Featured dialog status: $featured_status"
 
-        # Process selections regardless of button pressed
+        # Process featured selections if any
         if [ -s "$DESC_FILE" ]; then
             while IFS= read -r selected; do
                 selected=${selected//\"/}
                 if [ -n "$selected" ]; then
                     SELECTED_SCRIPTS[$selected]=1
-                    debug_log "Added to selection: $selected"
+                    debug_log "Selected featured script: $selected"
                 fi
             done <"$DESC_FILE"
         fi
 
-        # Then handle the dialog status
-        case $dialog_status in
-        0 | 3) # OK or Next button
-            debug_log "Continuing to main script selection"
-            ;;
-        *) # Cancel
-            debug_log "Featured script selection cancelled"
+        if [ $featured_status -ne 3 ]; then
+            debug_log "Featured selection cancelled"
             return 1
-            ;;
-        esac
+        fi
     fi
-    # Add after each selection processing
-    debug_log "Current selections: ${!SELECTED_SCRIPTS[*]}"
-    debug_log "Number of selections: ${#SELECTED_SCRIPTS[@]}"
 
-    # Modified Market Loop
+    # Market Loop
+    local current_list="$ALL_LIST_FILE"
     while true; do
-        echo -e "${BLUE}Showing script marketplace...${NC}"
-
         dialog --title "Script Market" \
             --backtitle "Llama Script Manager Installer v${VERSION}" \
-            --extra-button --extra-label "Install All" \
-            --help-button --help-label "Search" \
             --ok-label "Install Selected" \
             --cancel-label "Exit" \
+            --help-button --help-label "Search" \
             --colors \
             --checklist "\Zn\Z2Available Scripts\Zn (use SPACE to select/unselect):" \
-            $DIALOG_HEIGHT $DIALOG_WIDTH $((DIALOG_HEIGHT - 8)) \
-            --file "$ALL_LIST_FILE" \
+            40 100 32 \
+            --file "$current_list" \
             2>"$DESC_FILE"
 
-        dialog_status=$?
-        debug_log "Market dialog status: $dialog_status"
+        local market_status=$?
+        debug_log "Market dialog status: $market_status"
 
-        # Process selections first if file is not empty
-        if [ -s "$DESC_FILE" ]; then
-            while IFS= read -r selected; do
-                selected=${selected//\"/}
-                if [ -n "$selected" ]; then
-                    SELECTED_SCRIPTS[$selected]=1
-                    debug_log "Added to selection: $selected"
+        case $market_status in
+            0) 
+                debug_log "Processing final selections"
+                while IFS= read -r selected; do
+                    selected=${selected//\"/}
+                    if [ -n "$selected" ]; then
+                        SELECTED_SCRIPTS[$selected]=1
+                        debug_log "Added to selection: $selected"
+                    fi
+                done <"$DESC_FILE"
+                debug_log "Final selections: ${!SELECTED_SCRIPTS[*]}"
+                return 0
+                ;;
+            2) 
+                debug_log "Search requested"
+                local search_term=$(dialog --title "Search Scripts" \
+                    --backtitle "Llama Script Manager Installer v${VERSION}" \
+                    --inputbox "Enter search term (leave empty to show all):" \
+                    8 60 \
+                    2>"$DESC_FILE")
+                
+                local search_status=$?
+                debug_log "Search dialog status: $search_status"
+                
+                if [ $search_status -eq 0 ]; then
+                    search_term=$(cat "$DESC_FILE")
+                    debug_log "Searching for: '$search_term'"
+                    if [ -z "$search_term" ]; then
+                        current_list="$ALL_LIST_FILE"
+                    else
+                        filter_scripts "$search_term" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
+                        current_list="$FILTERED_LIST_FILE"
+                    fi
                 fi
-            done <"$DESC_FILE"
-        fi
+                continue
+                ;;
+            *) 
+                debug_log "Market selection cancelled"
+                if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
+                    return 1
+                fi
+                return 0
+                ;;
+        esac
     done
-
-    # Add after each selection processing
-    debug_log "Current selections: ${!SELECTED_SCRIPTS[*]}"
-    debug_log "Number of selections: ${#SELECTED_SCRIPTS[@]}"
-
-    debug_log "Search requested"
-    search_term=$(dialog --title "Search Scripts" \
-        --backtitle "Llama Script Manager Installer v${VERSION}" \
-        --inputbox "Enter search term (leave empty to show all):" \
-        8 60 \
-        2>"$DESC_FILE")
-
-    search_status=$?
-    debug_log "Search dialog status: $search_status"
-
-    if [ $search_status -eq 0 ]; then
-        search_term=$(cat "$DESC_FILE")
-        debug_log "Searching for: '$search_term'"
-        filter_scripts "$search_term" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
-        if [ -s "$FILTERED_LIST_FILE" ]; then
-            cp "$FILTERED_LIST_FILE" "$ALL_LIST_FILE"
-            debug_log "Updated script list with search results"
-        else
-            debug_log "No results found, keeping original list"
-        fi
-    fi
-    continue
 
     # Clean up temporary files
     rm -f "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
-
-    debug_log "Script selection completed with ${#SELECTED_SCRIPTS[@]} scripts selected"
-    return 0
 }
 
 #------------------------------------------------------------------------------
