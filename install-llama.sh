@@ -616,6 +616,7 @@ select_scripts() {
     # Show market dialog if we didn't press ESC in featured dialog
     # All Scripts Dialog with Search
     # Show market dialog
+    # Show market dialog
     current_list="$ALL_LIST_FILE"
     search_active=false
     last_search=""
@@ -649,27 +650,74 @@ select_scripts() {
         1) # Back pressed
             return 1
             ;;
-        2) # Search pressed
-            search_term=$(show_search_dialog)
+        2)
+            debug_log "Search button pressed - showing search dialog"
+            search_term=$(dialog --clear --title "Search Scripts" \
+                --backtitle "Llama Script Manager Installer v${VERSION}" \
+                --inputbox "Enter search term (leave empty to show all):" \
+                10 60 \
+                2>&1 >/dev/tty)
+
             search_status=$?
+            debug_log "Search dialog returned status: $search_status"
 
             if [ $search_status -eq 0 ]; then
                 if [ -n "$search_term" ]; then
                     debug_log "Processing search for: '$search_term'"
-                    filter_scripts "$search_term" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
-                    current_list="$FILTERED_LIST_FILE"
-                    search_active=true
-                    last_search="$search_term"
+                    # Create temporary file for filtered results
+                    local filtered_file=$(mktemp)
+
+                    # Convert search term to lowercase for case-insensitive search
+                    local search_lower=$(echo "$search_term" | tr '[:upper:]' '[:lower:]')
+
+                    # Read source file in groups of 3 lines
+                    local name desc state
+                    local found=false
+
+                    while IFS= read -r name; do
+                        read -r desc
+                        read -r state
+
+                        # Convert name and description to lowercase for comparison
+                        local name_lower=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+                        local desc_lower=$(echo "$desc" | tr '[:upper:]' '[:lower:]')
+
+                        if [[ "$name_lower" == *"$search_lower"* ]] || [[ "$desc_lower" == *"$search_lower"* ]]; then
+                            echo "$name" >>"$filtered_file"
+                            echo "$desc" >>"$filtered_file"
+                            if [[ -n "${SELECTED_SCRIPTS[$name]}" ]]; then
+                                echo "on" >>"$filtered_file"
+                            else
+                                echo "off" >>"$filtered_file"
+                            fi
+                            found=true
+                            debug_log "Found matching script: $name"
+                        fi
+                    done <"$ALL_LIST_FILE"
+
+                    if [ "$found" = true ]; then
+                        current_list="$filtered_file"
+                        search_active=true
+                        last_search="$search_term"
+                        debug_log "Search results loaded into dialog"
+                    else
+                        # No matches found
+                        echo "no_matches" >"$filtered_file"
+                        echo "\"No scripts found matching: $search_term\"" >>"$filtered_file"
+                        echo "off" >>"$filtered_file"
+                        current_list="$filtered_file"
+                        search_active=true
+                        last_search="$search_term"
+                        debug_log "No matches found for search term"
+                    fi
                 else
                     debug_log "Empty search term, showing all scripts"
                     current_list="$ALL_LIST_FILE"
                     search_active=false
                     last_search=""
                 fi
-                # Re-sync selections after search
-                sync_dialog_with_selections "$current_list"
             else
-                debug_log "Search cancelled"
+                debug_log "Search cancelled by user"
             fi
             ;;
         3) # Show All pressed
@@ -677,7 +725,6 @@ select_scripts() {
             current_list="$ALL_LIST_FILE"
             search_active=false
             last_search=""
-            sync_dialog_with_selections "$current_list"
             ;;
         255) # ESC pressed
             if [ "$search_active" = true ]; then
