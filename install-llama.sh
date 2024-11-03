@@ -52,22 +52,13 @@ cleanup_temp_files() {
     # Store the original exit code
     local exit_code=$?
 
-    # Only remove the temporary directory we created
-    if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
-        debug_log "Removing specific temporary directory: $TEMP_DIR"
-        rm -rf "$TEMP_DIR" 2>/dev/null || {
-            debug_log "Failed to remove directory: $TEMP_DIR"
-            sudo rm -rf "$TEMP_DIR" 2>/dev/null
-        }
-    fi
-
-    # Only remove specific temp files we created
-    for file in "$TEMP_FILE" "$DESC_FILE" "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"; do
-        if [ -n "$file" ] && [ -f "$file" ]; then
-            debug_log "Removing specific temporary file: $file"
-            rm -f "$file" 2>/dev/null || {
-                debug_log "Failed to remove file: $file"
-                sudo rm -f "$file" 2>/dev/null
+    # Remove all temporary files created during script execution
+    for tmp_file in /tmp/tmp.*; do
+        if [[ -f "$tmp_file" || -d "$tmp_file" ]]; then
+            debug_log "Removing temporary file/directory: $tmp_file"
+            rm -rf "$tmp_file" 2>/dev/null || {
+                debug_log "Failed to remove: $tmp_file, trying with sudo"
+                sudo rm -rf "$tmp_file" 2>/dev/null
             }
         fi
     done
@@ -658,6 +649,7 @@ select_scripts() {
     esac
 
     # Show Featured Scripts Dialog
+    # Show Featured Scripts Dialog
     while true; do
         mark_selections "$FEATURED_LIST_FILE"
 
@@ -694,120 +686,138 @@ select_scripts() {
             done
         fi
 
-        # Always proceed to all scripts dialog regardless of featured status
         break
     done
 
-    # All Scripts Dialog with Search
-    current_list="$ALL_LIST_FILE"
-    search_active=false
-    last_search=""
+    # Show market dialog only if no featured scripts were selected or if Skip was pressed
+    if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ] || [ "$featured_status" -eq 1 ]; then
+        # All Scripts Dialog with Search
+        current_list="$ALL_LIST_FILE"
+        search_active=false
+        last_search=""
 
-    while true; do
-        debug_log "Showing all scripts dialog with current_list: $current_list"
-        mark_selections "$current_list"
+        while true; do
+            debug_log "Showing all scripts dialog with current_list: $current_list"
+            mark_selections "$current_list"
 
-        dialog --title "Script Market" \
-            --backtitle "Llama Script Manager Installer v${VERSION}" \
-            --ok-label "Install Selected" \
-            --cancel-label "Back" \
-            --help-button --help-label "Search" \
-            --extra-button --extra-label "Show All" \
-            --colors \
-            --checklist "\Zn\Z2Available Scripts\Zn (use SPACE to select/unselect):\n\Z3Current filter: ${last_search:-none}\Zn" \
-            $DIALOG_HEIGHT $DIALOG_WIDTH $((DIALOG_HEIGHT - 8)) \
-            --file "$current_list" \
-            2>"$CURRENT_SELECTIONS"
-
-        local market_status=$?
-        debug_log "Market dialog status: $market_status"
-
-        case $market_status in
-        0) 
-            debug_log "Processing final selections from all scripts dialog"
-            if [ -s "$CURRENT_SELECTIONS" ]; then
-                eval "selected_array=($(cat "$CURRENT_SELECTIONS"))"
-                for selected in "${selected_array[@]}"; do
-                    selected=${selected//\"/}
-                    if [ -n "$selected" ]; then
-                        SELECTED_SCRIPTS[$selected]=1
-                        debug_log "Added to final selection: $selected"
-                    fi
-                done
-            fi
-            debug_log "Final selection complete, returning with success"
-            return 0
-            ;;
-        1) 
-            debug_log "Back button pressed"
-            if [ ${#SELECTED_SCRIPTS[@]} -gt 0 ]; then
-                debug_log "Returning with existing selections"
-                return 0
-            else
-                debug_log "No selections made, returning with failure"
-                return 1
-            fi
-            ;;
-        2) 
-            debug_log "Search button pressed"
-            local search_term=$(dialog --title "Search Scripts" \
+            dialog --title "Script Market" \
                 --backtitle "Llama Script Manager Installer v${VERSION}" \
-                --inputbox "Enter search term (leave empty to show all):" \
-                8 60 \
-                2>"$DESC_FILE")
+                --ok-label "Install Selected" \
+                --cancel-label "Exit" \
+                --help-button --help-label "Search" \
+                --extra-button --extra-label "Show All" \
+                --colors \
+                --checklist "\Zn\Z2Available Scripts\Zn (use SPACE to select/unselect):\n\Z3Current filter: ${last_search:-none}\Zn" \
+                $DIALOG_HEIGHT $DIALOG_WIDTH $((DIALOG_HEIGHT - 8)) \
+                --file "$current_list" \
+                2>"$CURRENT_SELECTIONS"
 
-            local search_status=$?
-            debug_log "Search dialog status: $search_status"
+            local market_status=$?
+            debug_log "Market dialog status: $market_status"
 
-            if [ $search_status -eq 0 ]; then
-                search_term=$(cat "$DESC_FILE")
-                if [ -n "$search_term" ]; then
-                    debug_log "Searching for: '$search_term'"
-                    filter_scripts "$search_term" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
-                    current_list="$FILTERED_LIST_FILE"
-                    search_active=true
-                    last_search="$search_term"
-                else
-                    debug_log "Empty search term, showing all scripts"
-                    current_list="$ALL_LIST_FILE"
-                    search_active=false
-                    last_search=""
+            case $market_status in
+            0) # Install Selected
+                debug_log "Processing final selections from all scripts dialog"
+                if [ -s "$CURRENT_SELECTIONS" ]; then
+                    eval "selected_array=($(cat "$CURRENT_SELECTIONS"))"
+                    for selected in "${selected_array[@]}"; do
+                        selected=${selected//\"/}
+                        if [ -n "$selected" ]; then
+                            SELECTED_SCRIPTS[$selected]=1
+                            debug_log "Added to final selection: $selected"
+                        fi
+                    done
                 fi
-            fi
-            continue
-            ;;
-        3) 
-            debug_log "Show All button pressed"
-            current_list="$ALL_LIST_FILE"
-            search_active=false
-            last_search=""
-            continue
-            ;;
-        255) 
-            debug_log "ESC pressed, treating as Back button"
-            if [ ${#SELECTED_SCRIPTS[@]} -gt 0 ]; then
-                debug_log "Returning with existing selections"
-                return 0
-            else
-                debug_log "No selections made, returning with failure"
-                return 1
-            fi
-            ;;
-        *) 
-            debug_log "Unknown dialog return code: $market_status"
-            if [ ${#SELECTED_SCRIPTS[@]} -gt 0 ]; then
-                debug_log "Returning with existing selections"
-                return 0
-            else
-                debug_log "No selections made, returning with failure"
-                return 1
-            fi
-            ;;
-        esac
+                debug_log "Final selection complete, returning with success"
+                break
+                ;;
+            1 | 255) # Exit or ESC
+                debug_log "Exit selected or ESC pressed"
+                if [ ${#SELECTED_SCRIPTS[@]} -gt 0 ]; then
+                    debug_log "Returning with existing selections"
+                    break
+                else
+                    debug_log "No selections made, returning with failure"
+                    return 1
+                fi
+                ;;
+            2) # Search
+                debug_log "Search button pressed"
+                local search_term=$(dialog --title "Search Scripts" \
+                    --backtitle "Llama Script Manager Installer v${VERSION}" \
+                    --inputbox "Enter search term (leave empty to show all):" \
+                    8 60 \
+                    2>"$DESC_FILE")
+
+                local search_status=$?
+                debug_log "Search dialog status: $search_status"
+
+                if [ $search_status -eq 0 ]; then
+                    search_term=$(cat "$DESC_FILE")
+                    if [ -n "$search_term" ]; then
+                        debug_log "Searching for: '$search_term'"
+                        filter_scripts "$search_term" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
+                        current_list="$FILTERED_LIST_FILE"
+                        search_active=true
+                        last_search="$search_term"
+                    else
+                        debug_log "Empty search term, showing all scripts"
+                        current_list="$ALL_LIST_FILE"
+                        search_active=false
+                        last_search=""
+                    fi
+                fi
+                ;;
+            3) # Show All
+                debug_log "Show All button pressed"
+                current_list="$ALL_LIST_FILE"
+                search_active=false
+                last_search=""
+                ;;
+            esac
+        done
+    fi
+
+    # At the end of select_scripts function
+    if [ ${#SELECTED_SCRIPTS[@]} -gt 0 ]; then
+        debug_log "Installation will proceed with selected scripts"
+        return 0
+    else
+        debug_log "No scripts selected for installation"
+        return 1
+    fi
+}
+
+# Improve cleanup function
+cleanup_temp_files() {
+    # Disable error handling during cleanup
+    set +e
+    trap - ERR
+
+    debug_log "Starting cleanup of temporary files"
+    echo -e "${YELLOW}Cleaning up temporary files...${NC}"
+
+    # Store the original exit code
+    local exit_code=$?
+
+    # Remove all temporary files created during script execution
+    for tmp_file in /tmp/tmp.*; do
+        if [[ -f "$tmp_file" || -d "$tmp_file" ]]; then
+            debug_log "Removing temporary file/directory: $tmp_file"
+            rm -rf "$tmp_file" 2>/dev/null || {
+                debug_log "Failed to remove: $tmp_file, trying with sudo"
+                sudo rm -rf "$tmp_file" 2>/dev/null
+            }
+        fi
     done
 
-    # Clean up temporary files
-    rm -f "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE" "$CURRENT_SELECTIONS"
+    debug_log "Cleanup completed"
+
+    # Re-enable error handling
+    set -e
+    trap 'handle_error $? $LINENO' ERR
+
+    return $exit_code
 }
 
 #------------------------------------------------------------------------------
