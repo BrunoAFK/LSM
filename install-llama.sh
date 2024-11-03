@@ -157,7 +157,7 @@ verify_dialog() {
     fi
 
     # Verify dialog works
-    if ! dialog --version >/dev/null 2>&1; then
+    if ! dialog status >/dev/null 2>&1; then
         debug_log "Dialog installation verification failed"
         echo -e "${RED}Error: Dialog installation failed${NC}"
         exit 1
