@@ -751,10 +751,11 @@ main() {
 
     # Verify symlink
     debug_log "Verifying installation"
+    echo $BIN_DIR
+    ls -la $BIN_DIR/llama
     if [ ! -L "$BIN_DIR/llama status" ]; then
         debug_log "ERROR: Symlink not created"
         echo -e "${RED}Error: Symlink creation failed${NC}"
-        echo "LLAMAAAAAAAAAAAA"
         exit 1
         
     fi
