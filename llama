@@ -3,10 +3,10 @@
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
 # Github: github.com/brunoafk
-# Version: 1.1.3
+# Version: 1.1.4
 # Description: Enhanced script manager with development and production environment support
 
-VERSION="1.1.3"
+VERSION="1.1.4"
 GITHUB_USER="BrunoAFK"
 GITHUB_REPO="LSM"
 GITHUB_BRANCH="main"
@@ -246,22 +246,22 @@ get_script_version() {
 compare_versions() {
     local version1=$1
     local version2=$2
-    
+
     # Convert versions to comparable numbers
     local v1=(${version1//./ })
     local v2=(${version2//./ })
-    
+
     # Compare each part of the version
     for i in {0..2}; do
         if [ "${v1[$i]:-0}" -gt "${v2[$i]:-0}" ]; then
-            echo "1"  # version1 is newer
+            echo "1" # version1 is newer
             return
         elif [ "${v1[$i]:-0}" -lt "${v2[$i]:-0}" ]; then
             echo "-1" # version2 is newer
             return
         fi
     done
-    echo "0"  # versions are equal
+    echo "0" # versions are equal
 }
 
 # Modify the update_script function
@@ -276,7 +276,7 @@ update_script() {
         # Check main script version
         local remote_version=$(get_remote_version)
         local current_version="$VERSION"
-        
+
         if [ -z "$remote_version" ]; then
             echo "Error: Could not fetch remote version"
             return 1
@@ -284,9 +284,9 @@ update_script() {
 
         echo "Current version: $current_version"
         echo "Latest version: $remote_version"
-        
+
         local version_compare=$(compare_versions "$current_version" "$remote_version")
-        
+
         if [ "$version_compare" -eq "-1" ]; then
             echo "Update available for main script"
             if install_from_github; then
@@ -304,22 +304,22 @@ update_script() {
         if [ -d "$scripts_dir" ]; then
             echo "Checking individual scripts for updates..."
             local updates_needed=false
-            
+
             for existing_script in "$scripts_dir"/*; do
                 if [ -f "$existing_script" ]; then
                     local script_name=$(basename "$existing_script")
                     local current_script_version=$(get_script_version "$existing_script")
                     local remote_script_version=$(curl -s "$GITHUB_RAW_BASE/scripts/$script_name" | get_script_version "/dev/stdin")
-                    
+
                     if [ -n "$remote_script_version" ] && [ -n "$current_script_version" ]; then
                         echo "Checking $script_name (Current: $current_script_version, Remote: $remote_script_version)"
                         local script_version_compare=$(compare_versions "$current_script_version" "$remote_script_version")
-                        
+
                         if [ "$script_version_compare" -eq "-1" ]; then
                             echo "Update available for $script_name"
                             updates_needed=true
                             # Update individual script
-                            if curl -s "$GITHUB_RAW_BASE/scripts/$script_name" | sudo tee "$scripts_dir/$script_name" > /dev/null; then
+                            if curl -s "$GITHUB_RAW_BASE/scripts/$script_name" | sudo tee "$scripts_dir/$script_name" >/dev/null; then
                                 sudo chmod +x "$scripts_dir/$script_name"
                                 echo "Updated $script_name successfully"
                             else
@@ -329,7 +329,7 @@ update_script() {
                     fi
                 fi
             done
-            
+
             if [ "$updates_needed" = false ]; then
                 echo "All scripts are up to date"
             fi
@@ -368,7 +368,7 @@ case "$1" in
 
     read -r install_dir scripts_dir <<<"$(get_directories)"
     script_path="$scripts_dir/$1"
-    if [ -x "$script_path" ]; then
+    if [[ -x "$script_path" ]]; then
         shift
         exec "$script_path" "$@"
     else
