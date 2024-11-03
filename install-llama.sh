@@ -613,7 +613,7 @@ copy_files() {
     print_section_header "Copying Files"
     debug_log "Number of selected scripts: ${#SELECTED_SCRIPTS[@]}"
 
-    # Add verification of selected scripts
+    # Verify selections before proceeding
     if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
         debug_log "ERROR: No scripts selected for installation"
         echo -e "${RED}Error: No scripts selected for installation${NC}"
@@ -621,52 +621,6 @@ copy_files() {
     fi
 
     # List all selected scripts for verification
-    echo -e "${BLUE}Installing selected scripts:${NC}"
-    for script_name in "${!SELECTED_SCRIPTS[@]}"; do
-        debug_log "Script marked for installation: $script_name"
-        echo -e "${GREEN}- $script_name${NC}"
-    done
-
-    # Copy main script
-    debug_log "Copying main script 'llama'"
-    sudo cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"
-    sudo chmod +x "$INSTALL_DIR/llama"
-
-    # Copy selected scripts
-    if [ -d "$TEMP_DIR/repo/scripts" ]; then
-        for script in "$TEMP_DIR/repo/scripts"/*; do
-            if [ -f "$script" ]; then
-                script_name=$(basename "$script")
-                debug_log "Checking script: $script_name (selected: ${SELECTED_SCRIPTS[$script_name]:-0})"
-                if [ "${SELECTED_SCRIPTS[$script_name]:-0}" -eq 1 ]; then
-                    echo -e "${GREEN}Installing: $script_name${NC}"
-                    debug_log "Copying $script_name to $INSTALL_DIR/scripts/"
-                    sudo cp "$script" "$INSTALL_DIR/scripts/"
-                    sudo chmod +x "$INSTALL_DIR/scripts/$script_name"
-                else
-                    debug_log "Skipping: $script_name (not selected)"
-                fi
-            fi
-        done
-    else
-        debug_log "ERROR: Scripts directory not found: $TEMP_DIR/repo/scripts"
-        echo -e "${RED}Error: Scripts directory not found${NC}"
-        exit 1
-    fi
-}
-
-copy_filesb() {
-    print_section_header "Copying Files"
-    debug_log "Number of selected scripts: ${#SELECTED_SCRIPTS[@]}"
-
-    # Verification of selected scripts
-    if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
-        debug_log "ERROR: No scripts selected for installation"
-        echo -e "${RED}Error: No scripts selected for installation${NC}"
-        exit 1
-    fi
-
-    # List selected scripts
     echo -e "${BLUE}Installing selected scripts:${NC}"
     for script_name in "${!SELECTED_SCRIPTS[@]}"; do
         debug_log "Script marked for installation: $script_name"
@@ -682,38 +636,68 @@ copy_filesb() {
     fi
     sudo chmod +x "$INSTALL_DIR/llama"
 
-    # Copy selected scripts with error checking
-    local install_success=false
-    if [ -d "$TEMP_DIR/repo/scripts" ]; then
-        for script in "$TEMP_DIR/repo/scripts"/*; do
-            if [ -f "$script" ]; then
-                script_name=$(basename "$script")
-                debug_log "Checking script: $script_name"
-                if [ "${SELECTED_SCRIPTS[$script_name]:-0}" -eq 1 ]; then
-                    echo -e "${GREEN}Installing: $script_name${NC}"
-                    if ! sudo cp "$script" "$INSTALL_DIR/scripts/"; then
-                        debug_log "ERROR: Failed to copy $script_name"
-                        echo -e "${RED}Error: Failed to copy $script_name${NC}"
-                        continue
-                    fi
-                    sudo chmod +x "$INSTALL_DIR/scripts/$script_name"
-                    install_success=true
-                fi
-            fi
-        done
-    else
-        debug_log "ERROR: Scripts directory not found"
-        echo -e "${RED}Error: Scripts directory not found${NC}"
-        exit 1
+    # Create scripts directory if it doesn't exist
+    if [ ! -d "$INSTALL_DIR/scripts" ]; then
+        debug_log "Creating scripts directory"
+        sudo mkdir -p "$INSTALL_DIR/scripts"
     fi
 
+    # Copy selected scripts with explicit path checking and error handling
+    local install_success=false
+    for script_name in "${!SELECTED_SCRIPTS[@]}"; do
+        debug_log "Processing script: $script_name"
+        
+        local script_path="$TEMP_DIR/repo/scripts/$script_name"
+        local target_path="$INSTALL_DIR/scripts/$script_name"
+        
+        # Verify source file exists
+        if [ ! -f "$script_path" ]; then
+            debug_log "ERROR: Source file not found: $script_path"
+            echo -e "${RED}Error: Script file not found: $script_name${NC}"
+            continue
+        }
+
+        echo -e "${GREEN}Installing: $script_name${NC}"
+        
+        # Copy with explicit error checking
+        if ! sudo cp "$script_path" "$target_path"; then
+            debug_log "ERROR: Failed to copy $script_name"
+            echo -e "${RED}Error: Failed to copy $script_name${NC}"
+            continue
+        fi
+        
+        # Set permissions with error checking
+        if ! sudo chmod +x "$target_path"; then
+            debug_log "ERROR: Failed to set executable permissions for $script_name"
+            echo -e "${RED}Error: Failed to set permissions for $script_name${NC}"
+            continue
+        }
+        
+        debug_log "Successfully installed $script_name"
+        install_success=true
+    done
+
+    # Verify at least one script was installed
     if [ "$install_success" = false ]; then
         debug_log "ERROR: No scripts were successfully installed"
         echo -e "${RED}Error: No scripts were successfully installed${NC}"
         exit 1
     fi
-}
 
+    # Verify final installation
+    debug_log "Verifying installation..."
+    local installed_count=$(ls -1 "$INSTALL_DIR/scripts" 2>/dev/null | wc -l)
+    debug_log "Number of installed scripts: $installed_count"
+    
+    if [ $installed_count -eq 0 ]; then
+        debug_log "ERROR: No scripts found in installation directory"
+        echo -e "${RED}Error: Installation verification failed${NC}"
+        exit 1
+    }
+
+    echo -e "${GREEN}Successfully installed ${installed_count} scripts${NC}"
+    return 0
+}
 create_symlink() {
     print_section_header "Creating Symlink"
     sudo ln -sf "$INSTALL_DIR/llama" "$BIN_DIR/llama"
