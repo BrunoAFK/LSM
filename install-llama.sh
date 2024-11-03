@@ -622,152 +622,44 @@ verify_script_execution() {
 copy_files() {
     print_section_header "Copying Files"
     debug_log "Number of selected scripts: ${#SELECTED_SCRIPTS[@]}"
-    debug_log "Current directory: $(pwd)"
-    debug_log "Temp directory contents: $(ls -la $TEMP_DIR)"
-    debug_log "Repo directory contents: $(ls -la $TEMP_DIR/repo)"
-    debug_log "Scripts directory contents: $(ls -la $TEMP_DIR/repo/scripts 2>/dev/null || echo 'Scripts directory not found')"
-    debug_log "Install directory: $INSTALL_DIR"
-    debug_log "Install directory contents before: $(ls -la $INSTALL_DIR 2>/dev/null || echo 'Install directory not found')"
 
-    # Verify selections before proceeding
+    # Verify we have scripts to install
     if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
         debug_log "ERROR: No scripts selected for installation"
         echo -e "${RED}Error: No scripts selected for installation${NC}"
         exit 1
     fi
 
-    # Dump selected scripts array content
-    debug_log "Selected scripts array content:"
-    for key in "${!SELECTED_SCRIPTS[@]}"; do
-        debug_log "  Key: '$key' Value: '${SELECTED_SCRIPTS[$key]}'"
-    done
-
-    # List all selected scripts for verification
+    # List selected scripts
     echo -e "${BLUE}Installing selected scripts:${NC}"
     for script_name in "${!SELECTED_SCRIPTS[@]}"; do
         debug_log "Script marked for installation: $script_name"
         echo -e "${GREEN}- $script_name${NC}"
     done
 
-    # Copy main script with error checking
+    # Copy main script and update paths
     debug_log "Copying main script 'llama'"
-    if ! sudo cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"; then
-        debug_log "ERROR: Failed to copy main script"
-        echo -e "${RED}Error: Failed to copy main script${NC}"
-        exit 1
-    fi
+    sudo cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"
     sudo chmod +x "$INSTALL_DIR/llama"
-
-    # Verify script header
-    debug_log "Checking script header"
-    if ! head -n 1 "$INSTALL_DIR/llama" | grep -q '^#!'; then
-        debug_log "ERROR: Missing shebang in main script"
-        echo -e "${RED}Error: Invalid script header${NC}"
-        debug_log "Adding shebang line"
-        sudo sed -i '1i#!/bin/bash' "$INSTALL_DIR/llama"
-    fi
-
-    # Update paths in the main script
-    debug_log "Updating paths in main script"
-    sudo sed -i "s|INSTALL_DIR=.*|INSTALL_DIR=\"$INSTALL_DIR\"|g" "$INSTALL_DIR/llama"
-    sudo sed -i "s|SCRIPTS_DIR=.*|SCRIPTS_DIR=\"$INSTALL_DIR/scripts\"|g" "$INSTALL_DIR/llama"
     
-    # Verify the changes
-    debug_log "Verifying path updates in main script"
-    debug_log "Script contents (first 30 lines):"
-    debug_log "$(head -n 30 "$INSTALL_DIR/llama")"
-    
-    # Verify file is readable and executable
-    debug_log "Verifying permissions"
-    sudo chmod 755 "$INSTALL_DIR/llama"
-    ls -la "$INSTALL_DIR/llama" >> /tmp/lsm_install_debug.log
+    # Update the script paths
+    sudo sed -i "s|/opt/llama|$INSTALL_DIR|g" "$INSTALL_DIR/llama"
 
-    # Create scripts directory if it doesn't exist
-    debug_log "Checking scripts directory: $INSTALL_DIR/scripts"
-    if [ ! -d "$INSTALL_DIR/scripts" ]; then
-        debug_log "Creating scripts directory"
-        if ! sudo mkdir -p "$INSTALL_DIR/scripts"; then
-            debug_log "ERROR: Failed to create scripts directory"
-            debug_log "mkdir exit code: $?"
-            echo -e "${RED}Error: Failed to create scripts directory${NC}"
-            exit 1
-        fi
-    fi
-    debug_log "Scripts directory permissions: $(ls -ld $INSTALL_DIR/scripts)"
-
-    # Copy selected scripts with explicit path checking and error handling
-    local install_success=false
+    # Copy selected scripts
     for script_name in "${!SELECTED_SCRIPTS[@]}"; do
-        debug_log "========================================="
-        debug_log "Processing script: $script_name"
-
-        local script_path="$TEMP_DIR/repo/scripts/$script_name"
-        local target_path="$INSTALL_DIR/scripts/$script_name"
-
-        debug_log "Source path: $script_path"
-        debug_log "Target path: $target_path"
-        debug_log "Source exists: $([ -f "$script_path" ] && echo "Yes" || echo "No")"
-        if [ -f "$script_path" ]; then
-            debug_log "Source file permissions: $(ls -la $script_path)"
-        fi
-
-        # Verify source file exists
-        if [ ! -f "$script_path" ]; then
-            debug_log "ERROR: Source file not found: $script_path"
-            debug_log "Directory contents: $(ls -la $TEMP_DIR/repo/scripts)"
-            echo -e "${RED}Error: Script file not found: $script_name${NC}"
-            continue
-        fi
-
-        echo -e "${GREEN}Installing: $script_name${NC}"
-
-        # Copy with explicit error checking
-        debug_log "Attempting to copy file..."
-        if ! sudo cp "$script_path" "$target_path"; then
-            debug_log "ERROR: Failed to copy $script_name"
-            debug_log "cp exit code: $?"
-            debug_log "Source readable: $([ -r "$script_path" ] && echo "Yes" || echo "No")"
-            debug_log "Target directory writable: $([ -w "$(dirname "$target_path")" ] && echo "Yes" || echo "No")"
-            echo -e "${RED}Error: Failed to copy $script_name${NC}"
-            continue
-        fi
-
-        debug_log "File copied successfully"
-        debug_log "Target file exists: $([ -f "$target_path" ] && echo "Yes" || echo "No")"
-
-        # Set permissions with error checking
-        debug_log "Setting executable permissions..."
-        if ! sudo chmod +x "$target_path"; then
-            debug_log "ERROR: Failed to set executable permissions for $script_name"
-            debug_log "chmod exit code: $?"
-            echo -e "${RED}Error: Failed to set permissions for $script_name${NC}"
-            continue
-        fi
-
-        debug_log "Permissions set successfully"
-        debug_log "Final file permissions: $(ls -la $target_path)"
-        debug_log "Successfully installed $script_name"
-        install_success=true
+        debug_log "Installing: $script_name"
+        sudo cp "$TEMP_DIR/repo/scripts/$script_name" "$INSTALL_DIR/scripts/"
+        sudo chmod +x "$INSTALL_DIR/scripts/$script_name"
     done
 
-    # Verify final installation
-    debug_log "========================================="
+    # Verify installation
     debug_log "Verifying installation..."
-    debug_log "Install directory contents after: $(ls -la $INSTALL_DIR)"
-    debug_log "Scripts directory contents after: $(ls -la $INSTALL_DIR/scripts)"
-
     local installed_count=$(ls -1 "$INSTALL_DIR/scripts" 2>/dev/null | wc -l)
     debug_log "Number of installed scripts: $installed_count"
-
+    
     if [ $installed_count -eq 0 ]; then
         debug_log "ERROR: No scripts found in installation directory"
         echo -e "${RED}Error: Installation verification failed${NC}"
-        exit 1
-    fi
-
-    if [ "$install_success" = false ]; then
-        debug_log "ERROR: No scripts were successfully installed"
-        echo -e "${RED}Error: No scripts were successfully installed${NC}"
         exit 1
     fi
 
