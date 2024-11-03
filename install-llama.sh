@@ -20,7 +20,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="2.0.6"
+VERSION="2.0.8"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -716,7 +716,7 @@ select_scripts() {
         dialog --title "Featured Scripts" \
             --backtitle "Llama Script Manager Installer v${VERSION}" \
             --ok-label "Next" \
-            --cancel-label "Exit" \
+            --cancel-label "Skip" \
             --colors \
             --checklist "\Zn\Z3Featured Scripts\Zn (use SPACE to select/unselect):" \
             $DIALOG_HEIGHT $DIALOG_WIDTH $((DIALOG_HEIGHT - 8)) \
@@ -738,17 +738,13 @@ select_scripts() {
             done
         fi
 
-        break
+        [ "$featured_status" -eq 0 ] && break      # If Next was pressed, break the loop
+        [ "$featured_status" -eq 1 ] && break      # If Skip was pressed, break the loop
+        [ "$featured_status" -eq 255 ] && return 1 # If ESC was pressed, exit completely
     done
 
-    # Exit if ESC was pressed in featured dialog
-    if [[ "$featured_status" -eq 255 || "$featured_status" -eq 1 ]]; then
-        debug_log "Featured scripts dialog cancelled"
-        return 1
-    fi
-
-    # Always show market dialog unless ESC was pressed
-    if [ "$featured_status" -eq 0 ]; then
+    # Show market dialog if we didn't press ESC in featured dialog
+    if [ "$featured_status" -eq 0 ] || [ "$featured_status" -eq 1 ]; then
         # All Scripts Dialog with Search
         current_list="$ALL_LIST_FILE"
         search_active=false
@@ -760,8 +756,8 @@ select_scripts() {
 
         while true; do
             debug_log "Showing all scripts dialog with current_list: $current_list"
-            cat $current_list
-            debug_log "$(cat $current_list)"
+            debug_log "Current selections before market dialog: ${!SELECTED_SCRIPTS[*]}"
+
             dialog --title "Script Market" \
                 --backtitle "Llama Script Manager Installer v${VERSION}" \
                 --ok-label "Install Selected" \
@@ -778,10 +774,8 @@ select_scripts() {
             debug_log "Market dialog status: $market_status"
 
             case $market_status in
-            0) # Install Selected
+            0) 
                 debug_log "Processing final selections from all scripts dialog"
-                # Clear all previous selections since market dialog is final
-                SELECTED_SCRIPTS=()
                 if [ -s "$CURRENT_SELECTIONS" ]; then
                     eval "selected_array=($(cat "$CURRENT_SELECTIONS"))"
                     for selected in "${selected_array[@]}"; do
@@ -795,7 +789,7 @@ select_scripts() {
                 debug_log "Final selection complete, returning with success"
                 return 0
                 ;;
-            1 | 255) # Exit or ESC
+            1 | 255) 
                 debug_log "Exit selected or ESC pressed"
                 return 1
                 ;;
