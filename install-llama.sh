@@ -20,7 +20,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="2.0.1"
+VERSION="2.0.5"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -297,12 +297,10 @@ select_scripts() {
 
     # Download and parse script_list.json
     debug_log "Downloading script_list.json"
-    local json_content=$(curl -s "https://raw.githubusercontent.com/BrunoAFK/LSM/refs/heads/dev/script_list.txt" | \
-                        sed -E 's/,(\s*[}\]])/\1/g' | \
-                        jq '.')
+    local json_content=$(curl -s "https://raw.githubusercontent.com/BrunoAFK/LSM/main/script_list.json")
     
-    if [ -z "$json_content" ]; then
-        debug_log "ERROR: Failed to download script_list.json"
+    if [ -z "$json_content" ] || ! echo "$json_content" | jq '.' >/dev/null 2>&1; then
+        debug_log "ERROR: Failed to download or parse script_list.json"
         echo -e "${RED}Error: Failed to download script list${NC}"
         return 1
     fi
