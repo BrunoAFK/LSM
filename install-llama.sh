@@ -20,7 +20,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="2.0.0"
+VERSION="2.0.1"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -276,6 +276,8 @@ select_scripts() {
         echo -e "${RED}Error: Failed to download script list${NC}"
         return 1
     fi
+
+    cat "$SCRIPT_LIST_FILE"
 
     # Prepare featured scripts list
     debug_log "Preparing featured scripts list"
