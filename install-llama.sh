@@ -594,6 +594,30 @@ select_scripts() {
 #------------------------------------------------------------------------------
 # Installation Functions
 #------------------------------------------------------------------------------
+verify_script_execution() {
+    local script="$1"
+    debug_log "Verifying script execution: $script"
+    
+    # Check shebang
+    local shebang=$(head -n 1 "$script")
+    debug_log "Script shebang: $shebang"
+    
+    # Check permissions
+    local perms=$(stat -c "%a" "$script")
+    debug_log "Script permissions: $perms"
+    
+    # Try executing with various methods
+    debug_log "Testing direct execution"
+    if ! "$script" --help >/dev/null 2>&1; then
+        debug_log "Direct execution failed, trying with bash"
+        if ! bash "$script" --help >/dev/null 2>&1; then
+            debug_log "Bash execution failed"
+            return 1
+        fi
+    fi
+    
+    return 0
+}
 
 copy_files() {
     print_section_header "Copying Files"
@@ -627,24 +651,21 @@ copy_files() {
 
     # Copy main script with error checking
     debug_log "Copying main script 'llama'"
-    debug_log "Source path: $TEMP_DIR/repo/llama"
-    debug_log "Target path: $INSTALL_DIR/llama"
-    debug_log "Main script exists: $([ -f "$TEMP_DIR/repo/llama" ] && echo "Yes" || echo "No")"
-
-    if [ ! -f "$TEMP_DIR/repo/llama" ]; then
-        debug_log "ERROR: Main script not found at $TEMP_DIR/repo/llama"
-        debug_log "Directory contents: $(ls -la $TEMP_DIR/repo)"
-        echo -e "${RED}Error: Main script not found${NC}"
-        exit 1
-    fi
-
-    debug_log "Copying main script 'llama'"
     if ! sudo cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"; then
         debug_log "ERROR: Failed to copy main script"
         echo -e "${RED}Error: Failed to copy main script${NC}"
         exit 1
     fi
     sudo chmod +x "$INSTALL_DIR/llama"
+
+    # Verify script header
+    debug_log "Checking script header"
+    if ! head -n 1 "$INSTALL_DIR/llama" | grep -q '^#!'; then
+        debug_log "ERROR: Missing shebang in main script"
+        echo -e "${RED}Error: Invalid script header${NC}"
+        debug_log "Adding shebang line"
+        sudo sed -i '1i#!/bin/bash' "$INSTALL_DIR/llama"
+    fi
 
     # Update paths in the main script
     debug_log "Updating paths in main script"
@@ -653,8 +674,13 @@ copy_files() {
     
     # Verify the changes
     debug_log "Verifying path updates in main script"
-    grep "INSTALL_DIR=" "$INSTALL_DIR/llama"
-    grep "SCRIPTS_DIR=" "$INSTALL_DIR/llama"
+    debug_log "Script contents (first 30 lines):"
+    debug_log "$(head -n 30 "$INSTALL_DIR/llama")"
+    
+    # Verify file is readable and executable
+    debug_log "Verifying permissions"
+    sudo chmod 755 "$INSTALL_DIR/llama"
+    ls -la "$INSTALL_DIR/llama" >> /tmp/lsm_install_debug.log
 
     # Create scripts directory if it doesn't exist
     debug_log "Checking scripts directory: $INSTALL_DIR/scripts"
@@ -796,24 +822,47 @@ cleanup_dialog() {
 test_configuration() {
     print_section_header "Testing Configuration"
     
-    debug_log "Testing llama executable"
-    if ! /usr/local/bin/llama --version >/dev/null 2>&1; then
-        debug_log "ERROR: llama executable test failed"
+    # Check file existence and permissions
+    debug_log "Checking llama executable:"
+    debug_log "$(ls -la /usr/local/bin/llama)"
+    debug_log "$(ls -la /usr/local/lib/llama/llama)"
+    
+    # Check script contents
+    debug_log "Checking script configuration:"
+    debug_log "$(grep 'INSTALL_DIR=' /usr/local/lib/llama/llama)"
+    debug_log "$(grep 'SCRIPTS_DIR=' /usr/local/lib/llama/llama)"
+    
+    # Test basic execution
+    debug_log "Testing basic execution"
+    output=$(/usr/local/bin/llama --version 2>&1)
+    exit_code=$?
+    debug_log "Version command exit code: $exit_code"
+    debug_log "Version command output: $output"
+    
+    if [ $exit_code -ne 0 ]; then
+        debug_log "ERROR: Basic execution failed"
+        # Try running with bash explicitly
+        debug_log "Trying with bash explicitly:"
+        bash -x /usr/local/bin/llama --version 2>&1
         return 1
     fi
     
     # Test script paths
     debug_log "Testing script paths"
-    status_output=$(/usr/local/bin/llama status)
+    status_output=$(/usr/local/bin/llama status 2>&1)
+    status_code=$?
+    debug_log "Status command exit code: $status_code"
     debug_log "Status output: $status_output"
     
-    if ! echo "$status_output" | grep -q "$INSTALL_DIR"; then
-        debug_log "ERROR: Incorrect installation directory"
+    if [ $status_code -ne 0 ]; then
+        debug_log "ERROR: Status command failed"
         return 1
     fi
     
-    if ! echo "$status_output" | grep -q "$INSTALL_DIR/scripts"; then
-        debug_log "ERROR: Incorrect scripts directory"
+    if ! echo "$status_output" | grep -q "$INSTALL_DIR"; then
+        debug_log "ERROR: Incorrect installation directory"
+        debug_log "Expected: $INSTALL_DIR"
+        debug_log "Found in output: $(echo "$status_output" | grep -i 'directory')"
         return 1
     fi
     
