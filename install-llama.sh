@@ -131,6 +131,74 @@ print_section_header() {
     fi
 }
 
+check_platform() {
+    print_section_header "Platform Check"
+    local platform=$(uname)
+    debug_log "Detected platform: $platform"
+    
+    # Global variables for platform-specific settings
+    declare -g DIALOG_HEIGHT
+    declare -g DIALOG_WIDTH
+    
+    case "$platform" in
+        Darwin)
+            # macOS-specific adjustments
+            DIALOG_HEIGHT=$(($(tput lines) - 10))
+            DIALOG_WIDTH=$(($(tput cols) - 10))
+            debug_log "Set macOS dialog dimensions: $DIALOG_HEIGHT x $DIALOG_WIDTH"
+            ;;
+        Linux)
+            # Linux-specific adjustments
+            DIALOG_HEIGHT=40
+            DIALOG_WIDTH=100
+            debug_log "Set Linux dialog dimensions: $DIALOG_HEIGHT x $DIALOG_WIDTH"
+            ;;
+        *)
+            debug_log "Unsupported platform: $platform"
+            echo -e "${YELLOW}Warning: Unsupported platform $platform${NC}"
+            DIALOG_HEIGHT=40
+            DIALOG_WIDTH=100
+            ;;
+    esac
+}
+
+verify_dialog() {
+    print_section_header "Dialog Verification"
+    debug_log "Verifying dialog installation"
+    
+    if ! command -v dialog >/dev/null 2>&1; then
+        debug_log "Dialog not found, attempting installation"
+        install_package dialog
+    fi
+    
+    # Verify dialog works
+    if ! dialog --version >/dev/null 2>&1; then
+        debug_log "Dialog installation verification failed"
+        echo -e "${RED}Error: Dialog installation failed${NC}"
+        exit 1
+    fi
+    
+    debug_log "Dialog verification successful"
+}
+
+verify_selections() {
+    print_section_header "Selection Verification"
+    debug_log "Verifying script selections..."
+    
+    if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
+        debug_log "No scripts selected"
+        return 1
+    fi
+    
+    echo -e "${BLUE}Selected scripts:${NC}"
+    for script in "${!SELECTED_SCRIPTS[@]}"; do
+        debug_log "Selected: $script (value: ${SELECTED_SCRIPTS[$script]})"
+        echo -e "${GREEN}- $script${NC}"
+    done
+    
+    return 0
+}
+
 #------------------------------------------------------------------------------
 # Package Installation Functions
 #------------------------------------------------------------------------------
@@ -184,7 +252,7 @@ install_package() {
     return 0
 }
 
-ensure_requirements() {
+ensure_requirementsB() {
     print_section_header "Checking and Installing Requirements"
     local required_packages=(jq dialog)
     local missing_packages=()
@@ -232,6 +300,63 @@ ensure_requirements() {
     done
 
     # Add a small delay after installation
+    sleep 2
+    debug_log "All required packages are now installed"
+    return 0
+}
+
+ensure_requirements() {
+    print_section_header "Checking and Installing Requirements"
+    local required_packages=(jq dialog)
+    local missing_packages=()
+    local all_installed=true
+
+    # Check platform first
+    check_platform
+    
+    # Check for git and curl first as they are essential
+    for cmd in git curl; do
+        if ! command -v $cmd &>/dev/null; then
+            echo -e "${RED}Error: $cmd is not installed${NC}"
+            echo "Please install $cmd first:"
+            echo "  For Ubuntu/Debian: sudo apt-get install $cmd"
+            echo "  For MacOS: brew install $cmd"
+            exit 1
+        fi
+    done
+
+    # Verify dialog specifically
+    verify_dialog
+
+    # Check for other required packages
+    for package in "${required_packages[@]}"; do
+        if ! command -v $package &>/dev/null; then
+            debug_log "$package is not installed"
+            missing_packages+=("$package")
+            all_installed=false
+        else
+            debug_log "$package is already installed"
+        fi
+    done
+
+    # If all packages are installed, return early
+    if [ "$all_installed" = true ]; then
+        debug_log "All required packages are already installed"
+        return 0
+    fi
+
+    # Install missing packages
+    for package in "${missing_packages[@]}"; do
+        if ! install_package "$package"; then
+            echo -e "${RED}Failed to install $package. Please install it manually:${NC}"
+            echo "  For Ubuntu/Debian: sudo apt-get install $package"
+            echo "  For MacOS: brew install $package"
+            echo "  For CentOS/RHEL: sudo yum install $package"
+            echo "  For Fedora: sudo dnf install $package"
+            exit 1
+        fi
+        echo -e "${GREEN}Successfully installed $package${NC}"
+    done
     sleep 2
     debug_log "All required packages are now installed"
     return 0
@@ -572,34 +697,41 @@ select_scripts() {
         echo -e "${BLUE}Showing featured scripts...${NC}"
         dialog --title "Featured Scripts" \
             --backtitle "Llama Script Manager Installer v${VERSION}" \
-            --no-ok \
             --extra-button --extra-label "Next" \
             --colors \
             --checklist "\Zn\Z3Featured Scripts\Zn (use SPACE to select/unselect):" \
-            $height 100 $((height - 8)) \
+            $DIALOG_HEIGHT $DIALOG_WIDTH $((DIALOG_HEIGHT - 8)) \
             --file "$FEATURED_LIST_FILE" \
             2>"$DESC_FILE"
 
         dialog_status=$?
+        debug_log "Dialog status: $dialog_status"
 
-        case $dialog_status in
-        3) # Next button
-            debug_log "Next button pressed, processing selections"
+        # Process selections regardless of button pressed
+        if [ -s "$DESC_FILE" ]; then
             while IFS= read -r selected; do
                 selected=${selected//\"/}
                 if [ -n "$selected" ]; then
                     SELECTED_SCRIPTS[$selected]=1
-                    debug_log "Selected featured script: $selected"
+                    debug_log "Added to selection: $selected"
                 fi
             done <"$DESC_FILE"
+        fi
+
+        # Then handle the dialog status
+        case $dialog_status in
+        0 | 3) # OK or Next button
+            debug_log "Continuing to main script selection"
             ;;
         *) # Cancel
             debug_log "Featured script selection cancelled"
-            rm -f "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
             return 1
             ;;
         esac
     fi
+    # Add after each selection processing
+    debug_log "Current selections: ${!SELECTED_SCRIPTS[*]}"
+    debug_log "Number of selections: ${#SELECTED_SCRIPTS[@]}"
 
     # Modified Market Loop
     while true; do
@@ -613,61 +745,52 @@ select_scripts() {
             --cancel-label "Exit" \
             --colors \
             --checklist "\Zn\Z2Available Scripts\Zn (use SPACE to select/unselect):" \
-            40 100 32 \
+            $DIALOG_HEIGHT $DIALOG_WIDTH $((DIALOG_HEIGHT - 8)) \
             --file "$ALL_LIST_FILE" \
             2>"$DESC_FILE"
 
         dialog_status=$?
-        debug_log "Market dialog returned status: $dialog_status"
+        debug_log "Market dialog status: $dialog_status"
 
-        case $dialog_status in
-        0) # Install Selected
-            debug_log "Processing script selections"
+        # Process selections first if file is not empty
+        if [ -s "$DESC_FILE" ]; then
             while IFS= read -r selected; do
                 selected=${selected//\"/}
                 if [ -n "$selected" ]; then
                     SELECTED_SCRIPTS[$selected]=1
-                    debug_log "Selected script: $selected"
+                    debug_log "Added to selection: $selected"
                 fi
             done <"$DESC_FILE"
-            break
-            ;;
-        2) # Search (Help button)
-            debug_log "Search requested"
-            search_term=$(dialog --title "Search Scripts" \
-                --backtitle "Llama Script Manager Installer v${VERSION}" \
-                --inputbox "Enter search term (leave empty to show all):" \
-                8 60 \
-                2>&1)
-
-            if [ $? -eq 0 ]; then
-                debug_log "Searching for: $search_term"
-                filter_scripts "$search_term" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
-                cp "$FILTERED_LIST_FILE" "$ALL_LIST_FILE"
-            fi
-            continue
-            ;;
-        3) # Install All
-            debug_log "Install All selected"
-            count=0
-            while IFS= read -r line; do
-                if [ $((++count % 3)) -eq 1 ]; then
-                    SELECTED_SCRIPTS["$line"]=1
-                    debug_log "Adding all script: $line"
-                fi
-            done <"$ALL_LIST_FILE"
-            break
-            ;;
-        *) # Exit
-            debug_log "Market selection cancelled"
-            if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
-                rm -f "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
-                return 1
-            fi
-            break
-            ;;
-        esac
+        fi
     done
+
+    # Add after each selection processing
+    debug_log "Current selections: ${!SELECTED_SCRIPTS[*]}"
+    debug_log "Number of selections: ${#SELECTED_SCRIPTS[@]}"
+
+    debug_log "Search requested"
+    search_term=$(dialog --title "Search Scripts" \
+        --backtitle "Llama Script Manager Installer v${VERSION}" \
+        --inputbox "Enter search term (leave empty to show all):" \
+        8 60 \
+        2>"$DESC_FILE")
+    
+    search_status=$?
+    debug_log "Search dialog status: $search_status"
+    
+    if [ $search_status -eq 0 ]; then
+        search_term=$(cat "$DESC_FILE")
+        debug_log "Searching for: '$search_term'"
+        filter_scripts "$search_term" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
+        if [ -s "$FILTERED_LIST_FILE" ]; then
+            cp "$FILTERED_LIST_FILE" "$ALL_LIST_FILE"
+            debug_log "Updated script list with search results"
+        else
+            debug_log "No results found, keeping original list"
+        fi
+    fi
+    continue
+    ;;
 
     # Clean up temporary files
     rm -f "$SCRIPT_LIST_FILE" "$FEATURED_LIST_FILE" "$ALL_LIST_FILE" "$FILTERED_LIST_FILE"
@@ -724,7 +847,6 @@ copy_filesB() {
         exit 1
     fi
 }
-
 
 copy_files() {
     print_section_header "Copying Files"
