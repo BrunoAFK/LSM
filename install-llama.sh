@@ -667,14 +667,8 @@ select_scripts() {
 
         case $featured_status in
             1 | 255) # Exit or ESC
-                debug_log "Exit selected or ESC pressed"
-                if [ ${#SELECTED_SCRIPTS[@]} -gt 0 ]; then
-                    debug_log "Returning with existing selections"
-                    exit 1
-                else
-                    debug_log "No selections made, returning with failure"
-                    exit 1
-                fi
+                debug_log "Exit .................."
+                exit 1
                 ;;
         esac
 
