@@ -2,17 +2,17 @@
 #==============================================================================
 # Llama Script Manager (LSM) Installer
 #
-# This script automates the installation of LSM from GitHub, providing:
-# - Interactive script selection via dialog interface
-# - Automatic dependency handling
-# - Comprehensive error handling and debugging
-# - Clean installation with proper permissions
+# A comprehensive installation script that:
+# - Provides an interactive UI for script selection
+# - Handles dependencies automatically
+# - Manages error cases and provides debugging
+# - Ensures clean installation with proper permissions
 #==============================================================================
 
 #------------------------------------------------------------------------------
-# Configuration and Setup
+# Global Configuration
 #------------------------------------------------------------------------------
-# Color codes for consistent output formatting
+# Terminal output color definitions
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -29,9 +29,10 @@ declare -A SELECTED_SCRIPTS
 DEBUG=true # Set to true to enable debug output
 
 #------------------------------------------------------------------------------
-# Core Error Handling Functions
+# Error Management
 #------------------------------------------------------------------------------
-
+# Handles cleanup of temporary files and directories
+# Returns the original exit code to maintain error state
 cleanup_temp_files() {
     # Disable error handling during cleanup
     set +e
@@ -72,6 +73,8 @@ cleanup_temp_files() {
     return $exit_code
 }
 
+# Central error handler that processes all script failures
+# Parameters: $1=exit_code, $2=line_number
 handle_error() {
     local exit_code=$1
     local line_number=$2
@@ -185,8 +188,10 @@ verify_selections() {
 }
 
 #------------------------------------------------------------------------------
-# Package Installation Functions
+# Package Management
 #------------------------------------------------------------------------------
+# Cross-platform package installation handler
+# Supports apt, yum, dnf, and brew package managers
 install_package() {
     local package=$1
     debug_log "Attempting to install $package"
@@ -237,59 +242,7 @@ install_package() {
     return 0
 }
 
-ensure_requirementsB() {
-    print_section_header "Checking and Installing Requirements"
-    local required_packages=(jq dialog)
-    local missing_packages=()
-    local all_installed=true
-
-    # Check for git and curl first as they are essential
-    for cmd in git curl; do
-        if ! command -v $cmd &>/dev/null; then
-            echo -e "${RED}Error: $cmd is not installed${NC}"
-            echo "Please install $cmd first:"
-            echo "  For Ubuntu/Debian: sudo apt-get install $cmd"
-            echo "  For MacOS: brew install $cmd"
-            exit 1
-        fi
-    done
-
-    # Check for other required packages
-    for package in "${required_packages[@]}"; do
-        if ! command -v $package &>/dev/null; then
-            debug_log "$package is not installed"
-            missing_packages+=("$package")
-            all_installed=false
-        else
-            debug_log "$package is already installed"
-        fi
-    done
-
-    # If all packages are installed, return early
-    if [ "$all_installed" = true ]; then
-        debug_log "All required packages are already installed"
-        return 0
-    fi
-
-    # Install missing packages
-    for package in "${missing_packages[@]}"; do
-        if ! install_package "$package"; then
-            echo -e "${RED}Failed to install $package. Please install it manually:${NC}"
-            echo "  For Ubuntu/Debian: sudo apt-get install $package"
-            echo "  For MacOS: brew install $package"
-            echo "  For CentOS/RHEL: sudo yum install $package"
-            echo "  For Fedora: sudo dnf install $package"
-            exit 1
-        fi
-        echo -e "${GREEN}Successfully installed $package${NC}"
-    done
-
-    # Add a small delay after installation
-    sleep 2
-    debug_log "All required packages are now installed"
-    return 0
-}
-
+# Verifies and installs all required system dependencies
 ensure_requirements() {
     print_section_header "Checking and Installing Requirements"
     local required_packages=(jq dialog)
@@ -348,8 +301,9 @@ ensure_requirements() {
 }
 
 #------------------------------------------------------------------------------
-# Repository Functions
+# Repository Management
 #------------------------------------------------------------------------------
+# Validates repository accessibility before installation
 check_repository() {
     print_section_header "Checking Repository"
     if ! curl --output /dev/null --silent --head --fail "https://github.com/$GITHUB_USER/$GITHUB_REPO"; then
@@ -362,6 +316,7 @@ check_repository() {
     fi
 }
 
+# Creates and configures temporary working directory
 setup_temp_dir() {
     print_section_header "Setting up Temporary Directory"
     TEMP_DIR=$(mktemp -d)
@@ -372,6 +327,7 @@ setup_temp_dir() {
     trap 'cleanup_temp_files' EXIT INT TERM
 }
 
+# Retrieves installation files from repository
 clone_repository() {
     print_section_header "Cloning Repository"
     if ! git clone "$REPO_URL" "$TEMP_DIR/repo" 2>/dev/null; then
@@ -380,20 +336,18 @@ clone_repository() {
     fi
 }
 
+# Prepares installation directory structure
 create_directories() {
     print_section_header "Creating Installation Directories"
     sudo mkdir -p "$INSTALL_DIR"
     sudo mkdir -p "$INSTALL_DIR/scripts"
 }
 
-# Declare the associative array globally
-declare -A selected_scripts
-declare -A script_descriptions
-
 #------------------------------------------------------------------------------
 # Script Selection Interface
 #------------------------------------------------------------------------------
-
+# Provides interactive UI for script selection
+# Supports featured scripts, search, and bulk installation
 select_scripts() {
     print_section_header "Script Selection"
     local scripts_dir="$TEMP_DIR/repo/scripts"
@@ -592,8 +546,9 @@ select_scripts() {
 }
 
 #------------------------------------------------------------------------------
-# Installation Functions
+# Installation Process
 #------------------------------------------------------------------------------
+# Validates script executability and permissions
 verify_script_execution() {
     local script="$1"
     debug_log "Verifying script execution: $script"
@@ -619,6 +574,7 @@ verify_script_execution() {
     return 0
 }
 
+# Copies selected scripts to installation directory
 copy_files() {
     print_section_header "Copying Files"
     debug_log "Number of selected scripts: ${#SELECTED_SCRIPTS[@]}"
@@ -667,6 +623,7 @@ copy_files() {
     return 0
 }
 
+# Creates system-wide command symlink
 create_symlink() {
     print_section_header "Creating Symlink"
     debug_log "Creating symlink from $INSTALL_DIR/llama to $BIN_DIR/llama"
@@ -695,6 +652,7 @@ create_symlink() {
     debug_log "Symlink details: $(ls -la $BIN_DIR/llama)"
 }
 
+# Removes dialog if it was temporarily installed
 cleanup_dialog() {
     print_section_header "Cleaning Up Dialog"
     if command -v dialog >/dev/null 2>&1; then
@@ -711,10 +669,10 @@ cleanup_dialog() {
     fi
 }
 
-
 #------------------------------------------------------------------------------
-# Main Installation Process
+# Installation Orchestration
 #------------------------------------------------------------------------------
+# Coordinates the complete installation process
 main() {
     debug_log "Starting main installation process"
     echo -e "${GREEN}Starting Llama Script Manager Installation...${NC}"
@@ -751,13 +709,12 @@ main() {
 
     # Verify symlink
     debug_log "Verifying installation"
-    echo $BIN_DIR
-    ls -la $BIN_DIR/llama
-    if [ ! -L "$BIN_DIR/llama status" ]; then
-        debug_log "ERROR: Symlink not created"
-        echo -e "${RED}Error: Symlink creation failed${NC}"
+    status_output=$($BIN_DIR/llama status)
+    # Check if the output contains "Llama Script Manager Status"
+    if [[ "$status_output" != *"Llama Script Manager Status"* ]]; then
+        debug_log "ERROR: 'Llama Script Manager Status' not found in status output"
+        echo -e "${RED}Error: 'Llama Script Manager Status' not found${NC}"
         exit 1
-        
     fi
 
 
@@ -771,5 +728,5 @@ main() {
     exit 0
 }
 
-# Start the installation
+# Initialize installation
 main
