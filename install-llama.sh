@@ -20,13 +20,13 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.1.2"
+VERSION="1.1.6"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
 
 # Debug flag
-DEBUG=false # Set to true to enable debug output
+DEBUG=true # Set to true to enable debug output
 
 #------------------------------------------------------------------------------
 # Core Error Handling Functions
@@ -310,90 +310,121 @@ select_scripts() {
     debug_log "Launching dialog command..."
     echo -e "${BLUE}Launching dialog...${NC}"
 
-    # In the select_scripts function, replace the dialog command with:
-    if dialog --title "Script Selection" \
-        --backtitle "Llama Script Manager Installer v${VERSION}" \
-        --extra-button --extra-label "Install All" \
-        --checklist "Select scripts to install (use SPACE to select/unselect):" \
-        $height 100 $((height - 8)) \
-        --file "$TEMP_FILE" \
-        2>"$DESC_FILE"; then
+    # Create a temporary file for the full script list
+    local FULL_LIST_FILE=$(mktemp)
+    local FILTERED_LIST_FILE=$(mktemp)
+
+    # Prepare the full script list
+    while IFS= read -r -d '' script; do
+        script_basename=$(basename "$script")
+        description="No description available"
+        if [ -f "$script" ]; then
+            desc=$(head -n 20 "$script" | grep -i "^#.*description:" | head -n 1 | sed 's/^#[ ]*[Dd]escription:[ ]*//')
+            [ -n "$desc" ] && description=${desc:0:60}
+        fi
+        printf '%s\n' "$script_basename" "\"$description\"" "off" >>"$FULL_LIST_FILE"
+    done < <(find "$scripts_dir" -type f -name "*" -print0)
+
+    # Function to filter scripts based on search term
+    filter_scripts() {
+        local search_term="$1"
+        local source_file="$2"
+        local target_file="$3"
+        
+        if [ -z "$search_term" ]; then
+            cp "$source_file" "$target_file"
+        else
+            # Filter based on script name or description
+            awk -v search="${search_term,,}" '
+            {
+                if (NR % 3 == 1) script=$0;
+                if (NR % 3 == 2) desc=$0;
+                if (NR % 3 == 0) {
+                    if (tolower(script) ~ search || tolower(desc) ~ search) {
+                        print prev2; print prev1; print $0;
+                    }
+                }
+                prev2=script;
+                prev1=desc;
+            }' "$source_file" > "$target_file"
+        fi
+    }
+
+    while true; do
+        # Show search dialog
+        search_term=$(dialog --title "Search Scripts" \
+            --backtitle "Llama Script Manager Installer v${VERSION}" \
+            --inputbox "Enter search term (leave empty to show all):" \
+            8 60 \
+            2>&1 >/dev/tty)
+        
         dialog_status=$?
-        debug_log "Normal selection completed with status: $dialog_status"
-    else
-        dialog_status=$?
-        debug_log "Dialog completed with status: $dialog_status"
-        if [ $dialog_status -eq 3 ]; then
-            debug_log "Install All option selected"
-            # Process all scripts
-            while IFS= read -r -d '' script; do
-                script_basename=$(basename "$script")
-                SELECTED_SCRIPTS[$script_basename]=1
-                debug_log "Adding script to install: $script_basename"
-            done < <(find "$scripts_dir" -type f -print0)
-            return 0
-        elif [ $dialog_status -ne 0 ]; then
-            debug_log "Dialog cancelled or error occurred"
+        
+        # Handle cancel
+        if [ $dialog_status -ne 0 ]; then
+            debug_log "Search cancelled"
+            rm -f "$FULL_LIST_FILE" "$FILTERED_LIST_FILE"
             return 1
         fi
-    fi
 
-    # In the select_scripts function, modify the dialog status handling:
-    dialog_status=$?
-    debug_log "Dialog exit status: $dialog_status"
+        # Filter scripts based on search term
+        filter_scripts "$search_term" "$FULL_LIST_FILE" "$FILTERED_LIST_FILE"
 
-    # Add explicit debug logging for the Install All case
-    if [ "$dialog_status" -eq 3 ]; then
-        debug_log "Install All option selected"
-        echo -e "\n${BLUE}Installing all scripts...${NC}"
+        # Count filtered items
+        filtered_count=$(wc -l < "$FILTERED_LIST_FILE")
+        filtered_count=$((filtered_count / 3))
+        
+        if [ $filtered_count -eq 0 ]; then
+            dialog --msgbox "No scripts found matching: $search_term" 8 40
+            continue
+        }
 
-        # Clear and reinitialize the SELECTED_SCRIPTS array
-        declare -A SELECTED_SCRIPTS=()
+        # Calculate dialog height
+        local height=$((filtered_count + 10))
+        [[ $height -gt 40 ]] && height=40
 
-        # Find all scripts in the directory
-        while IFS= read -r -d '' script; do
-            script_basename=$(basename "$script")
-            SELECTED_SCRIPTS[$script_basename]=1
-            debug_log "Marking for installation: $script_basename"
-            echo -e "  - ${GREEN}$script_basename${NC}"
-        done < <(find "$scripts_dir" -type f -print0)
-
-        # Verify selections
-        if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
-            debug_log "ERROR: No scripts were marked for installation"
-            echo -e "${RED}Error: No scripts were marked for installation${NC}"
-            exit 1
+        # Show script selection dialog with filtered results
+        if dialog --title "Script Selection" \
+            --backtitle "Llama Script Manager Installer v${VERSION}" \
+            --extra-button --extra-label "Install All" \
+            --extra-button --extra-label "New Search" \
+            --checklist "Found $filtered_count scripts (use SPACE to select/unselect):" \
+            $height 100 $((height - 8)) \
+            --file "$FILTERED_LIST_FILE" \
+            2>"$DESC_FILE"; then
+            
+            dialog_status=$?
+            
+            case $dialog_status in
+                0) # Normal selection
+                    debug_log "Normal selection completed"
+                    break
+                    ;;
+                3) # Install All
+                    debug_log "Install All selected"
+                    # Process all scripts from the filtered list
+                    while IFS= read -r line; do
+                        if [ $((++count % 3)) -eq 1 ]; then
+                            SELECTED_SCRIPTS["$line"]=1
+                        fi
+                    done < "$FILTERED_LIST_FILE"
+                    break
+                    ;;
+                4) # New Search
+                    debug_log "New search requested"
+                    continue
+                    ;;
+                *) # Cancel
+                    debug_log "Selection cancelled"
+                    rm -f "$FULL_LIST_FILE" "$FILTERED_LIST_FILE"
+                    return 1
+                    ;;
+            esac
         fi
+    done
 
-        # Before copying each script:
-        echo -e "${YELLOW}Installing ${#SELECTED_SCRIPTS[@]} scripts...${NC}"
-        for script_name in "${!SELECTED_SCRIPTS[@]}"; do
-            echo -e "${GREEN}- Installing: $script_name${NC}"
-        done
-
-        debug_log "Total scripts marked for installation: ${#SELECTED_SCRIPTS[@]}"
-        return 0
-    elif [ "$dialog_status" -eq 0 ]; then # Normal selection
-        debug_log "Processing normal selection"
-
-        # Clear the global array
-        SELECTED_SCRIPTS=()
-
-        # Process selected scripts from dialog output
-        while IFS= read -r selected; do
-            selected=${selected//\"/} # Remove quotes
-            if [ -n "$selected" ]; then
-                SELECTED_SCRIPTS[$selected]=1
-                debug_log "Selected script: $selected"
-            fi
-        done < <(tr ' ' '\n' <"$DESC_FILE" | grep -v '^$')
-
-        debug_log "Total scripts selected: ${#SELECTED_SCRIPTS[@]}"
-    else
-        debug_log "Dialog cancelled or error occurred (status: $dialog_status)"
-        echo -e "\n${YELLOW}Installation cancelled or error occurred${NC}"
-        exit 1
-    fi
+    # Clean up temporary files
+    rm -f "$FULL_LIST_FILE" "$FILTERED_LIST_FILE"
 }
 
 #------------------------------------------------------------------------------
