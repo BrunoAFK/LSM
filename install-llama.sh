@@ -716,7 +716,7 @@ select_scripts() {
         dialog --title "Featured Scripts" \
             --backtitle "Llama Script Manager Installer v${VERSION}" \
             --ok-label "Next" \
-            --cancel-label "Skip" \
+            --cancel-label "Exit" \
             --colors \
             --checklist "\Zn\Z3Featured Scripts\Zn (use SPACE to select/unselect):" \
             $DIALOG_HEIGHT $DIALOG_WIDTH $((DIALOG_HEIGHT - 8)) \
@@ -742,8 +742,8 @@ select_scripts() {
     done
 
     # Exit if ESC was pressed in featured dialog
-    if [ "$featured_status" -eq 255 ]; then
-        debug_log "Featured scripts dialog cancelled with ESC"
+    if [ "$featured_status" -eq 255 || "$featured_status" -eq 1 ]; then
+        debug_log "Featured scripts dialog cancelled"
         return 1
     fi
 
