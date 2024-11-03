@@ -671,7 +671,7 @@ copy_files() {
             debug_log "ERROR: Failed to set executable permissions for $script_name"
             echo -e "${RED}Error: Failed to set permissions for $script_name${NC}"
             continue
-        }
+        fi
         
         debug_log "Successfully installed $script_name"
         install_success=true
@@ -693,11 +693,12 @@ copy_files() {
         debug_log "ERROR: No scripts found in installation directory"
         echo -e "${RED}Error: Installation verification failed${NC}"
         exit 1
-    }
+    fi
 
     echo -e "${GREEN}Successfully installed ${installed_count} scripts${NC}"
     return 0
 }
+
 create_symlink() {
     print_section_header "Creating Symlink"
     sudo ln -sf "$INSTALL_DIR/llama" "$BIN_DIR/llama"
