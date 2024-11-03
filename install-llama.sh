@@ -711,13 +711,6 @@ copy_files() {
         exit 1
     fi
 
-    # List selected scripts
-    echo -e "${BLUE}Installing selected scripts:${NC}"
-    for script_name in "${!SELECTED_SCRIPTS[@]}"; do
-        debug_log "Script marked for installation: $script_name"
-        echo -e "${GREEN}- $script_name${NC}"
-    done
-
     # Copy main script and update paths
     debug_log "Copying main script 'llama'"
     sudo cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"
@@ -725,6 +718,13 @@ copy_files() {
 
     # Update the script paths
     sudo sed -i "s|/opt/llama|$INSTALL_DIR|g" "$INSTALL_DIR/llama"
+
+    # List selected scripts
+    echo -e "${BLUE}Installing selected scripts:${NC}"
+    for script_name in "${!SELECTED_SCRIPTS[@]}"; do
+        debug_log "Script marked for installation: $script_name"
+        echo -e "${GREEN}- $script_name${NC}"
+    done
 
     # Copy selected scripts
     for script_name in "${!SELECTED_SCRIPTS[@]}"; do
