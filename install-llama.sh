@@ -271,13 +271,13 @@ select_scripts() {
 
     # Download and parse script_list.json
     debug_log "Downloading script_list.json"
-    if ! curl -s "https://raw.githubusercontent.com/BrunoAFK/LSM/refs/heads/dev/script_list.txt" > "$SCRIPT_LIST_FILE"; then
+    if ! curl -s "https://raw.githubusercontent.com/BrunoAFK/LSM/refs/heads/dev/script_list.json" > "$SCRIPT_LIST_FILE"; then
         debug_log "ERROR: Failed to download script_list.json"
         echo -e "${RED}Error: Failed to download script list${NC}"
         return 1
     fi
 
-    cat "$SCRIPT_LIST_FILE"
+    cat $SCRIPT_LIST_FILE
 
     # Prepare featured scripts list
     debug_log "Preparing featured scripts list"
