@@ -20,7 +20,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Version
-VERSION="1.1.7"
+VERSION="1.1.8"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
