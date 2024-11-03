@@ -743,7 +743,30 @@ copy_files() {
 
 create_symlink() {
     print_section_header "Creating Symlink"
-    sudo ln -sf "$INSTALL_DIR/llama" "$BIN_DIR/llama"
+    debug_log "Creating symlink from $INSTALL_DIR/llama to $BIN_DIR/llama"
+    
+    # Remove existing symlink if it exists
+    if [ -L "$BIN_DIR/llama" ]; then
+        debug_log "Removing existing symlink"
+        sudo rm -f "$BIN_DIR/llama"
+    fi
+    
+    # Create new symlink
+    if ! sudo ln -sf "$INSTALL_DIR/llama" "$BIN_DIR/llama"; then
+        debug_log "ERROR: Failed to create symlink"
+        echo -e "${RED}Error: Failed to create symlink${NC}"
+        exit 1
+    fi
+    
+    # Verify symlink
+    if [ ! -L "$BIN_DIR/llama" ]; then
+        debug_log "ERROR: Symlink verification failed"
+        echo -e "${RED}Error: Symlink verification failed${NC}"
+        exit 1
+    fi
+    
+    debug_log "Symlink created successfully"
+    debug_log "Symlink details: $(ls -la $BIN_DIR/llama)"
 }
 
 cleanup_dialog() {
@@ -799,42 +822,53 @@ main() {
     debug_log "Creating symlink"
     create_symlink
 
-    debug_log "Cleaning up dialog"
-    cleanup_dialog
-
-    # Add verification after cleanup
-    debug_log "Performing final verification"
-    if [ ! -f "$INSTALL_DIR/llama" ]; then
-        debug_log "ERROR: Main script missing after installation"
-        echo -e "${RED}Error: Installation verification failed${NC}"
+    # Verify symlink
+    debug_log "Verifying symlink"
+    if [ ! -L "/usr/local/bin/llama" ]; then
+        debug_log "ERROR: Symlink not created"
+        echo -e "${RED}Error: Symlink creation failed${NC}"
         exit 1
     fi
 
-    # Verify scripts
-    debug_log "Verifying installed scripts"
-    for script_name in "${!SELECTED_SCRIPTS[@]}"; do
-        if [ ! -f "$INSTALL_DIR/scripts/$script_name" ]; then
-            debug_log "ERROR: Script $script_name missing after installation"
-            echo -e "${RED}Error: Script $script_name missing after installation${NC}"
-            exit 1
+    # Verify llama executable works
+    debug_log "Testing llama executable"
+    if ! /usr/local/bin/llama --version >/dev/null 2>&1; then
+        debug_log "ERROR: llama executable test failed"
+        echo -e "${RED}Error: llama executable test failed${NC}"
+        exit 1
+    fi
+
+    # Verify script permissions
+    debug_log "Verifying script permissions"
+    for script in "$INSTALL_DIR/scripts"/*; do
+        if [ -f "$script" ]; then
+            debug_log "Checking permissions for: $script"
+            if [ ! -x "$script" ]; then
+                debug_log "ERROR: Script not executable: $script"
+                echo -e "${RED}Error: Script not executable: $(basename "$script")${NC}"
+                sudo chmod +x "$script"
+            fi
         fi
-        debug_log "Verified script: $script_name"
     done
 
-    debug_log "All scripts verified after cleanup"
+    # Show installation status
+    echo -e "\n${BLUE}Installation Status:${NC}"
+    echo -e "Main script: ${GREEN}installed${NC}"
+    echo -e "Symlink: ${GREEN}created${NC}"
+    echo -e "\nInstalled scripts:"
+    for script in "$INSTALL_DIR/scripts"/*; do
+        if [ -f "$script" ]; then
+            echo -e "${GREEN}- $(basename "$script")${NC}"
+        fi
+    done
 
-    echo -e "${GREEN}Installation completed successfully!${NC}"
-    echo -e "Run ${YELLOW}llama help${NC} to get started."
-    debug_log "Installation completed"
-    echo
-    llama status
-    echo
-    echo -e "${GREEN}Installation completed successfully!${NC}"
-    echo -e "Run ${YELLOW}llama help${NC} to get started."
+    echo -e "\n${GREEN}Installation completed successfully!${NC}"
+    echo -e "Try these commands:"
+    echo -e "${YELLOW}llama help${NC} - Show help"
+    echo -e "${YELLOW}llama status${NC} - Show status"
+    echo -e "${YELLOW}llama list${NC} - List available scripts"
 
-    # Disable error handling before exiting
-    set +e
-    trap - ERR
+    debug_log "Installation completed successfully"
     exit 0
 }
 
