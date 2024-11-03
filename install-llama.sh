@@ -711,32 +711,6 @@ cleanup_dialog() {
     fi
 }
 
-test_configuration() {
-    print_section_header "Testing Configuration"
-    
-    # Check file existence and permissions
-    debug_log "Checking llama executable:"
-    debug_log "$(ls -la /usr/local/bin/llama)"
-    debug_log "$(ls -la /usr/local/lib/llama/llama)"
-    
-    # Test executable with status command
-    debug_log "Testing llama status command"
-    output=$(/usr/local/bin/llama status 2>&1)
-    exit_code=$?
-    debug_log "Status command exit code: $exit_code"
-    debug_log "Status command output: $output"
-    
-    if [ $exit_code -ne 0 ]; then
-        debug_log "ERROR: Basic execution failed"
-        debug_log "Trying with bash explicitly:"
-        debug_log "$(bash /usr/local/bin/llama status 2>&1)"
-        return 1
-    fi
-    
-    # Success
-    return 0
-}
-
 #------------------------------------------------------------------------------
 # Main Installation Process
 #------------------------------------------------------------------------------
@@ -781,14 +755,7 @@ main() {
         echo -e "${RED}Error: Symlink creation failed${NC}"
         exit 1
     fi
-
-    debug_log "Testing configuration"
-    if ! test_configuration; then
-        debug_log "ERROR: Configuration test failed"
-        echo -e "${RED}Error: Configuration test failed${NC}"
-        exit 1
-    fi
-
+    
     # Verify llama executable works
     debug_log "Testing llama executable"
     if ! /usr/local/bin/llama status >/dev/null 2>&1; then
