@@ -667,7 +667,7 @@ select_scripts() {
 
         case $FEATURED_LIST_FILE in
             1 | 255) # Exit or ESC
-                debug_log "Exit .................."
+                debug_log "Done"
                 exit 1
                 ;;
         esac
@@ -691,8 +691,6 @@ select_scripts() {
                 fi
             done
         fi
-
-        break
     done
 
     # Show market dialog only if no featured scripts were selected or if Skip was pressed
