@@ -478,7 +478,7 @@ select_scripts() {
     echo "$json_content" >"$SCRIPT_LIST_FILE"
 
     # Prepare lists
-    jq -r '.scripts[] | select(.rank | contains("Featured")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" >"$FEATURED_LIST_FILE"
+    jq -r '.scripts[] | select(.rank | contains("Homelab")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" >"$FEATURED_LIST_FILE"
     jq -r '.scripts[] | select(.path | contains("./scripts/")) | "\(.name)\n\"\(.description)\"\noff"' "$SCRIPT_LIST_FILE" >"$ALL_LIST_FILE"
 
     # Function to mark previously selected scripts
