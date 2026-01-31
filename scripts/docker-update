@@ -87,6 +87,13 @@ if [[ "$1" == "-h" || "$1" == "help" ]]; then
     exit 0
 fi
 
+MIN_API="1.44"
+SERVER_API="$(docker version --format '{{.Server.APIVersion}}' 2>/dev/null || true)"
+
+# Pick the higher of MIN_API and SERVER_API (sort -V handles version-ish strings)
+API_TO_USE="$(printf "%s\n%s\n" "$MIN_API" "$SERVER_API" | sed '/^$/d' | sort -V | tail -n1)"
+
+
 # Handle the custom arguments for .env management
 case "$1" in
     "env")
@@ -119,6 +126,7 @@ case "$1" in
         echo "Running Watchtower to update Docker containers..."
         docker run --name watchtower_update \
             -v /var/run/docker.sock:/var/run/docker.sock \
+            -e DOCKER_API_VERSION="$API_TO_USE" \
             -e WATCHTOWER_CLEANUP=true \
             -e WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PORT="$WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PORT" \
             -e WATCHTOWER_NOTIFICATION_EMAIL_SERVER_USER="$WATCHTOWER_NOTIFICATION_EMAIL_SERVER_USER" \
