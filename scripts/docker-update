@@ -3,7 +3,7 @@
 # Information header
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
-# Version: 1.2
+# Version: 1.3
 # Description: This script runs Watchtower to update Docker containers, cleans up unused Docker resources, and manages a .env file for configuration.
 # How it works: The script can generate or show the .env file and uses it to configure Watchtower.
 
