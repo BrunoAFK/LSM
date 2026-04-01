@@ -107,12 +107,22 @@ resolve_trivy_image() {
     TRIVY_IMAGE="${TRIVY_IMAGE:-$TRIVY_IMAGE_DEFAULT}"
 }
 
+# Run trivy for Docker images (via container)
 run_trivy() {
     docker run --rm \
         -v /var/run/docker.sock:/var/run/docker.sock \
         -v "$TRIVY_CACHE_DIR:/root/.cache/" \
         "$TRIVY_IMAGE" \
         "$@"
+}
+
+# Run trivy for host scan — mount host root as /host inside container
+run_trivy_host() {
+    docker run --rm \
+        -v /:/host:ro \
+        -v "$TRIVY_CACHE_DIR:/root/.cache/" \
+        "$TRIVY_IMAGE" \
+        rootfs --root /host "$@"
 }
 
 # Parse trivy JSON output and extract counts per severity
@@ -175,7 +185,29 @@ show_cve_details() {
             printf "      ${sev_color}%-16s${NC} %-12s %-20s %s\n" "$cve" "$sev" "$pkg ($ver)" "$desc"
         done <<< "$output"
     else
-        echo "      (install jq for detailed CVE output)"
+        echo -e "      ${YELLOW}jq is required for --verbose output.${NC}"
+        echo -n "      Install jq now? [y/N] "
+        read -r install_jq
+        if [[ "$install_jq" =~ ^[Yy]$ ]]; then
+            if command -v apt-get >/dev/null 2>&1; then
+                sudo apt-get install -y jq
+            elif command -v dnf >/dev/null 2>&1; then
+                sudo dnf install -y jq
+            elif command -v yum >/dev/null 2>&1; then
+                sudo yum install -y jq
+            elif command -v brew >/dev/null 2>&1; then
+                brew install jq
+            elif command -v apk >/dev/null 2>&1; then
+                sudo apk add jq
+            else
+                echo -e "      ${RED}Could not detect package manager.${NC}"
+                echo "      Install jq manually: https://jqlang.github.io/jq/download/"
+                return
+            fi
+            if command -v jq >/dev/null 2>&1; then
+                echo -e "      ${GREEN}jq installed.${NC} Re-run with --verbose to see details."
+            fi
+        fi
     fi
 }
 
@@ -313,6 +345,20 @@ $(printf '%s\n' "${critical_containers[@]}")"
     return 0
 }
 
+scan_host() {
+    local severity_filter="${1:-$SEVERITY}"
+
+    mkdir -p "$TRIVY_CACHE_DIR"
+
+    echo -e "${BLUE}Updating Trivy vulnerability database...${NC}"
+    run_trivy image --download-db-only -q 2>/dev/null || true
+    echo
+
+    echo -e "${BLUE}Scanning host filesystem for OS vulnerabilities...${NC}"
+    echo
+    run_trivy_host --severity "$severity_filter"
+}
+
 scan_image() {
     local image="$1"
     if [ -z "$image" ]; then
@@ -370,8 +416,8 @@ show_help() {
     echo -e "${BLUE}Docker Security Scanner v1.1${NC}"
     echo
     echo -e "${GREEN}Description:${NC}"
-    echo "  Scans Docker container images for vulnerabilities using Trivy."
-    echo "  Trivy runs as a pinned Docker container — no host install needed."
+    echo "  Scans Docker container images and host OS for vulnerabilities"
+    echo "  using Trivy. Trivy runs as a Docker container — no host install needed."
     echo
     echo -e "${YELLOW}Usage:${NC}"
     echo "  llama docker-scan <command> [flags]"
@@ -381,6 +427,8 @@ show_help() {
     printf "%-30s %-50s\n" "run --verbose" "Scan with CVE details per container"
     printf "%-30s %-50s\n" "run --critical" "Only CRITICAL vulnerabilities"
     printf "%-30s %-50s\n" "run --critical --verbose" "CRITICAL with details"
+    printf "%-30s %-50s\n" "host" "Scan host OS for vulnerabilities"
+    printf "%-30s %-50s\n" "host --critical" "Host scan, CRITICAL only"
     printf "%-30s %-50s\n" "image <name>" "Full Trivy output for one image"
     printf "%-30s %-50s\n" "check-trivy" "Check for Trivy updates"
     printf "%-30s %-50s\n" "help, -h" "Show this help"
@@ -389,6 +437,7 @@ show_help() {
     echo "  llama docker-scan run"
     echo "  llama docker-scan run --verbose"
     echo "  llama docker-scan run --critical --verbose"
+    echo "  llama docker-scan host"
     echo "  llama docker-scan image nginx:1.27"
     echo "  llama docker-scan check-trivy"
     echo
@@ -441,6 +490,18 @@ case "$1" in
             shift
         done
         scan_containers "$severity" "$verbose"
+        ;;
+    "host")
+        severity="$SEVERITY"
+        shift
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --critical) severity="CRITICAL" ;;
+                *) echo -e "${RED}Unknown flag:${NC} $1"; exit 1 ;;
+            esac
+            shift
+        done
+        scan_host "$severity"
         ;;
     "image")
         scan_image "$2"
