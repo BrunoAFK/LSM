@@ -28,6 +28,9 @@ declare -A SELECTED_SCRIPTS
 # Debug flag
 DEBUG=false # Set to true to enable debug output
 
+# Track whether dialog was installed by this script
+DIALOG_INSTALLED_BY_LSM=false
+
 #------------------------------------------------------------------------------
 # Core Error Handling Functions
 #------------------------------------------------------------------------------
@@ -176,7 +179,8 @@ setup_temp_dir() {
 # Add this function after the color definitions
 clone_repository() {
     print_section_header "Cloning Repository"
-    if ! git clone "$REPO_URL" "$TEMP_DIR/repo" 2>/dev/null; then
+    if ! git clone --depth 1 --branch "$GITHUB_BRANCH" --single-branch \
+        "$REPO_URL" "$TEMP_DIR/repo" 2>/dev/null; then
         echo -e "${RED}Error: Failed to clone repository${NC}"
         exit 1
     fi
@@ -233,6 +237,7 @@ select_scripts() {
     if ! command -v dialog >/dev/null 2>&1; then
         debug_log "Dialog not found, attempting installation"
         echo -e "${YELLOW}Dialog is not installed. Attempting to install...${NC}"
+        DIALOG_INSTALLED_BY_LSM=true
 
         if command -v apt-get >/dev/null 2>&1; then
             debug_log "Using apt-get to install dialog"
@@ -458,7 +463,7 @@ create_symlink() {
 # Add this function after the color definitions
 cleanup_dialog() {
     print_section_header "Cleaning Up Dialog"
-    if command -v dialog >/dev/null 2>&1; then
+    if [ "$DIALOG_INSTALLED_BY_LSM" = true ] && command -v dialog >/dev/null 2>&1; then
         if command -v apt-get >/dev/null 2>&1; then
             sudo apt-get remove -y dialog
             sudo apt-get autoremove -y
@@ -514,7 +519,7 @@ main() {
     echo -e "Run ${YELLOW}llama help${NC} to get started."
     debug_log "Installation completed"
     echo
-    llama status
+    "$INSTALL_DIR/llama" status
     echo
     echo -e "${GREEN}Installation completed successfully!${NC}"
     echo -e "Run ${YELLOW}llama help${NC} to get started."

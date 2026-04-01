@@ -3,10 +3,10 @@
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
 # Github: github.com/brunoafk
-# Version: 1.1.4
+# Version: 2.0.0
 # Description: Enhanced script manager with development and production environment support
 
-VERSION="1.1.4"
+VERSION="2.0.0"
 GITHUB_USER="BrunoAFK"
 GITHUB_REPO="LSM"
 GITHUB_BRANCH="main"
@@ -18,10 +18,16 @@ GITHUB_RAW_BASE="https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/$GI
 GITHUB_API_BASE="https://api.github.com/repos/$GITHUB_USER/$GITHUB_REPO"
 TEMP_DIR=""
 
+# Minimum age (in days) a release must have before we'll install it.
+# This gives time for security issues to be discovered before users pull it.
+RELEASE_MIN_AGE_DAYS=21
+
 # Determines if the script is running from the development directory
 # Returns: true if running from DEV_DIR, false otherwise
 is_dev_mode() {
-    [[ "$(basename "$(pwd)")/$(basename "$0")" == "$(basename "$DEV_DIR")/llama" ]]
+    local script_dir
+    script_dir="$(cd -- "$(dirname -- "$0")" && pwd -P)"
+    [[ "$script_dir" == "$DEV_DIR" ]]
 }
 
 # Creates a temporary directory and registers cleanup handler
@@ -54,19 +60,26 @@ get_bin_path() {
 
 # Display help information with environment indication and script descriptions
 show_help() {
+    local env_type
+    env_type=$(is_dev_mode && echo "DEVELOPMENT" || echo "PRODUCTION")
     echo -e "\e[1;34mLlama Script Manager v$VERSION\e[0m"
+    echo -e "Environment: \e[1;33m$env_type\e[0m"
     echo
     echo -e "\e[1;32mUsage:\e[0m"
-    echo "  llama [COMMAND] [ARGUMENTS]"
+    echo "  llama <command> [args]"
+    echo "  llama <script> [args]"
     echo
     echo -e "\e[1;33mCore Commands:\e[0m"
-    printf "%-20s %-40s\n" "Command" "Description"
-    printf "%-20s %-40s\n" "-------" "-----------"
-    printf "%-20s %-40s\n" "help, -h" "Show this help message"
-    printf "%-20s %-40s\n" "install, -i" "Install llama script and components"
-    printf "%-20s %-40s\n" "remove, -r" "Remove llama script and components"
-    printf "%-20s %-40s\n" "update, -u" "Update llama script and components"
-    printf "%-20s %-40s\n" "status, -s" "Show current environment status"
+    printf "%-20s %-45s\n" "help, -h" "Show this help message"
+    printf "%-20s %-45s\n" "install, -i" "Install llama and scripts"
+    printf "%-20s %-45s\n" "remove, -r" "Remove llama and scripts"
+    printf "%-20s %-45s\n" "update, -u" "Update llama and scripts"
+    printf "%-20s %-45s\n" "status, -s" "Show environment status"
+    echo
+    echo -e "\e[1;33mExamples:\e[0m"
+    echo "  llama status"
+    echo "  llama update"
+    echo "  llama <script> -h"
     echo
     echo -e "\e[1;33mAvailable Scripts:\e[0m"
     read -r install_dir scripts_dir <<<"$(get_directories)"
@@ -93,7 +106,7 @@ download_file() {
     local output="$2"
     local response
 
-    response=$(curl -s -w "%{http_code}" "$GITHUB_RAW_BASE/$path" -o "$output")
+    response=$(curl -fsSL -w "%{http_code}" "$GITHUB_RAW_BASE/$path" -o "$output")
 
     if [ "$response" != "200" ]; then
         rm -f "$output"
@@ -104,9 +117,12 @@ download_file() {
 
 # Create a symbolic link for the main script
 create_symlink() {
-    local bin_path=$(get_bin_path)
+    local bin_path
+    local install_dir
+    bin_path=$(get_bin_path)
+    read -r install_dir _ <<<"$(get_directories)"
     if ! is_dev_mode; then
-        sudo ln -sf "$PROD_DIR/llama" "$bin_path/llama"
+        sudo ln -sf "$install_dir/llama" "$bin_path/llama"
         echo "Created production symbolic link in $bin_path"
     fi
 }
@@ -120,7 +136,9 @@ install_from_dev() {
     sudo mkdir -p "$scripts_dir"
 
     # Copy main script
-    if [ "$(realpath "$0")" != "$install_dir/llama" ]; then
+    local script_path
+    script_path="$(cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")"
+    if [ "$script_path" != "$install_dir/llama" ]; then
         sudo cp "$0" "$install_dir/llama"
         sudo chmod +x "$install_dir/llama"
     fi
@@ -141,9 +159,17 @@ install_from_github() {
     sudo mkdir -p "$scripts_dir"
 
     # Clone the repository
-    git clone "https://github.com/$GITHUB_USER/$GITHUB_REPO.git" "$TEMP_DIR/repo"
+    if ! git clone --depth 1 --branch "$GITHUB_BRANCH" --single-branch \
+        "https://github.com/$GITHUB_USER/$GITHUB_REPO.git" "$TEMP_DIR/repo"; then
+        echo "Failed to clone repository"
+        return 1
+    fi
 
     if [ -d "$TEMP_DIR/repo" ]; then
+        if [ ! -f "$TEMP_DIR/repo/llama" ]; then
+            echo "Repository missing expected files"
+            return 1
+        fi
         # Update main script
         sudo cp "$TEMP_DIR/repo/llama" "$install_dir/llama"
         sudo chmod +x "$install_dir/llama"
@@ -227,113 +253,314 @@ show_status() {
     fi
 }
 
-# Add these helper functions
-get_remote_version() {
-    local version=""
-    # Try to get version from raw GitHub content
-    version=$(curl -s "$GITHUB_RAW_BASE/llama" | grep "^VERSION=" | cut -d'"' -f2)
-    echo "$version"
+# SHA256 helper — works on both macOS and Linux
+sha256_file() {
+    local file="$1"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    else
+        echo ""
+    fi
 }
 
 get_script_version() {
     local script_path="$1"
-    local version=""
-    # Try to get version from script comments
-    version=$(head -n 20 "$script_path" | grep -i "^#.*version:" | head -n 1 | sed 's/^#[ ]*[Vv]ersion:[ ]*//')
-    echo "$version"
+    head -n 20 "$script_path" | grep -i "^#.*version:" | head -n 1 | sed 's/^#[ ]*[Vv]ersion:[ ]*//'
 }
 
 compare_versions() {
     local version1=$1
     local version2=$2
-
-    # Convert versions to comparable numbers
     local v1=(${version1//./ })
     local v2=(${version2//./ })
 
-    # Compare each part of the version
     for i in {0..2}; do
         if [ "${v1[$i]:-0}" -gt "${v2[$i]:-0}" ]; then
-            echo "1" # version1 is newer
-            return
+            echo "1"; return
         elif [ "${v1[$i]:-0}" -lt "${v2[$i]:-0}" ]; then
-            echo "-1" # version2 is newer
-            return
+            echo "-1"; return
         fi
     done
-    echo "0" # versions are equal
+    echo "0"
 }
 
-# Modify the update_script function
+# Convert ISO 8601 date to epoch seconds (works on macOS and Linux)
+date_to_epoch() {
+    local datestr="$1"
+    if date -j -f "%Y-%m-%dT%H:%M:%SZ" "$datestr" +%s 2>/dev/null; then
+        return
+    fi
+    # Linux
+    date -d "$datestr" +%s 2>/dev/null
+}
+
+# Fetch the newest release that is at least RELEASE_MIN_AGE_DAYS old.
+# This "quarantine" window gives time for compromised releases to be caught
+# before users pull them.
+# Sets: RELEASE_TAG, RELEASE_CHECKSUM_URL
+fetch_release_info() {
+    # Get last 20 releases (paginated)
+    local api_response
+    api_response=$(curl -fsSL "$GITHUB_API_BASE/releases?per_page=20" 2>/dev/null) || {
+        echo "Error: Could not reach GitHub API"
+        return 1
+    }
+
+    local now_epoch
+    now_epoch=$(date +%s)
+    local min_age_seconds=$((RELEASE_MIN_AGE_DAYS * 86400))
+
+    RELEASE_TAG=""
+    RELEASE_CHECKSUM_URL=""
+
+    # Parse releases line by line — find the newest one old enough
+    local tag published_at checksum_url
+    local in_release=false current_tag="" current_date="" current_checksum=""
+
+    while IFS= read -r line; do
+        # Detect tag_name
+        if [[ "$line" =~ \"tag_name\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+            # Save previous release candidate if we had one pending
+            if [ -n "$current_tag" ] && [ -n "$current_date" ]; then
+                local release_epoch
+                release_epoch=$(date_to_epoch "$current_date")
+                if [ -n "$release_epoch" ]; then
+                    local age=$((now_epoch - release_epoch))
+                    if [ "$age" -ge "$min_age_seconds" ]; then
+                        RELEASE_TAG="${current_tag#v}"
+                        RELEASE_CHECKSUM_URL="$current_checksum"
+                        break
+                    fi
+                fi
+            fi
+            current_tag="${BASH_REMATCH[1]}"
+            current_date=""
+            current_checksum=""
+        fi
+
+        # Detect published_at
+        if [[ "$line" =~ \"published_at\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+            current_date="${BASH_REMATCH[1]}"
+        fi
+
+        # Detect checksums.txt asset
+        if [[ "$line" =~ \"browser_download_url\"[[:space:]]*:[[:space:]]*\"([^\"]*checksums\.txt)\" ]]; then
+            current_checksum="${BASH_REMATCH[1]}"
+        fi
+    done <<< "$api_response"
+
+    # Check the last parsed release too
+    if [ -z "$RELEASE_TAG" ] && [ -n "$current_tag" ] && [ -n "$current_date" ]; then
+        local release_epoch
+        release_epoch=$(date_to_epoch "$current_date")
+        if [ -n "$release_epoch" ]; then
+            local age=$((now_epoch - release_epoch))
+            if [ "$age" -ge "$min_age_seconds" ]; then
+                RELEASE_TAG="${current_tag#v}"
+                RELEASE_CHECKSUM_URL="$current_checksum"
+            fi
+        fi
+    fi
+
+    if [ -z "$RELEASE_TAG" ]; then
+        return 1
+    fi
+}
+
+# Verify downloaded files against checksums.txt
+verify_checksums() {
+    local checksum_file="$1"
+    local target_dir="$2"
+
+    if [ ! -f "$checksum_file" ]; then
+        echo -e "\e[1;33mWarning:\e[0m No checksums file — skipping verification"
+        return 0
+    fi
+
+    local failed=0
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local expected_hash file_name
+        expected_hash=$(echo "$line" | awk '{print $1}')
+        file_name=$(echo "$line" | awk '{print $2}')
+        # Remove leading ./ or */ from filename
+        file_name=$(basename "$file_name")
+
+        local target_file="$target_dir/$file_name"
+        if [ ! -f "$target_file" ]; then
+            # Check in scripts subdir
+            target_file="$target_dir/scripts/$file_name"
+            [ ! -f "$target_file" ] && continue
+        fi
+
+        local actual_hash
+        actual_hash=$(sha256_file "$target_file")
+
+        if [ "$expected_hash" != "$actual_hash" ]; then
+            echo -e "\e[1;31mChecksum FAILED:\e[0m $file_name"
+            echo "  Expected: $expected_hash"
+            echo "  Got:      $actual_hash"
+            failed=1
+        else
+            echo -e "  \e[1;32m✓\e[0m $file_name"
+        fi
+    done < "$checksum_file"
+
+    return $failed
+}
+
+# Update using GitHub Releases API with checksum verification
+update_from_release() {
+    setup_temp_dir
+
+    echo "Checking GitHub releases (quarantine: ${RELEASE_MIN_AGE_DAYS} days)..."
+    if ! fetch_release_info; then
+        echo "No mature releases found, falling back to branch update..."
+        update_from_branch
+        return $?
+    fi
+
+    local remote_version="$RELEASE_TAG"
+    echo "Current version:  $VERSION"
+    echo "Stable release:   $remote_version (${RELEASE_MIN_AGE_DAYS}+ days old)"
+
+    local version_compare
+    version_compare=$(compare_versions "$VERSION" "$remote_version")
+
+    if [ "$version_compare" != "-1" ]; then
+        echo "Already up to date."
+        return 0
+    fi
+
+    echo -e "\e[1;32mUpdate available: $VERSION → $remote_version\e[0m"
+
+    # Clone the release tag
+    echo "Downloading release $remote_version..."
+    if ! git clone --depth 1 --branch "v$remote_version" --single-branch \
+        "https://github.com/$GITHUB_USER/$GITHUB_REPO.git" "$TEMP_DIR/repo" 2>/dev/null; then
+        # Try without v prefix
+        if ! git clone --depth 1 --branch "$remote_version" --single-branch \
+            "https://github.com/$GITHUB_USER/$GITHUB_REPO.git" "$TEMP_DIR/repo" 2>/dev/null; then
+            echo "Failed to download release"
+            return 1
+        fi
+    fi
+
+    if [ ! -f "$TEMP_DIR/repo/llama" ]; then
+        echo "Release is missing expected files"
+        return 1
+    fi
+
+    # Download and verify checksums if available
+    if [ -n "$RELEASE_CHECKSUM_URL" ]; then
+        echo "Verifying checksums..."
+        if curl -fsSL -o "$TEMP_DIR/checksums.txt" "$RELEASE_CHECKSUM_URL"; then
+            if ! verify_checksums "$TEMP_DIR/checksums.txt" "$TEMP_DIR/repo"; then
+                echo -e "\e[1;31mChecksum verification failed — aborting update\e[0m"
+                return 1
+            fi
+            echo -e "\e[1;32mChecksums verified\e[0m"
+        else
+            echo -e "\e[1;33mWarning:\e[0m Could not download checksums — proceeding without verification"
+        fi
+    else
+        echo -e "\e[1;33mNote:\e[0m No checksums in this release — proceeding without verification"
+    fi
+
+    # Install verified files
+    read -r install_dir scripts_dir <<<"$(get_directories)"
+    sudo mkdir -p "$install_dir" "$scripts_dir"
+
+    # Update main script
+    sudo install -m 755 "$TEMP_DIR/repo/llama" "$install_dir/llama"
+    echo "Updated llama → $remote_version"
+
+    # Update existing scripts
+    if [ -d "$TEMP_DIR/repo/scripts" ] && [ -d "$scripts_dir" ]; then
+        for existing_script in "$scripts_dir"/*; do
+            [ -f "$existing_script" ] || continue
+            local script_name
+            script_name=$(basename "$existing_script")
+            if [ -f "$TEMP_DIR/repo/scripts/$script_name" ]; then
+                sudo install -m 755 "$TEMP_DIR/repo/scripts/$script_name" "$scripts_dir/$script_name"
+                echo "Updated script: $script_name"
+            fi
+        done
+    fi
+
+    create_symlink
+    echo -e "\e[1;32mUpdate completed successfully.\e[0m"
+    echo "Restart llama to use the new version."
+}
+
+# Fallback: update from branch (for repos without releases)
+update_from_branch() {
+    setup_temp_dir
+
+    local remote_version
+    remote_version=$(curl -fsSL "$GITHUB_RAW_BASE/llama" 2>/dev/null | grep "^VERSION=" | cut -d'"' -f2)
+
+    if [ -z "$remote_version" ]; then
+        echo "Error: Could not fetch remote version"
+        return 1
+    fi
+
+    echo "Current version: $VERSION"
+    echo "Remote version:  $remote_version"
+
+    local version_compare
+    version_compare=$(compare_versions "$VERSION" "$remote_version")
+
+    if [ "$version_compare" != "-1" ]; then
+        echo "Already up to date."
+        return 0
+    fi
+
+    echo -e "\e[1;32mUpdate available: $VERSION → $remote_version\e[0m"
+
+    if ! git clone --depth 1 --branch "$GITHUB_BRANCH" --single-branch \
+        "https://github.com/$GITHUB_USER/$GITHUB_REPO.git" "$TEMP_DIR/repo" 2>/dev/null; then
+        echo "Failed to clone repository"
+        return 1
+    fi
+
+    if [ ! -f "$TEMP_DIR/repo/llama" ]; then
+        echo "Repository missing expected files"
+        return 1
+    fi
+
+    read -r install_dir scripts_dir <<<"$(get_directories)"
+    sudo mkdir -p "$install_dir" "$scripts_dir"
+
+    sudo install -m 755 "$TEMP_DIR/repo/llama" "$install_dir/llama"
+    echo "Updated llama → $remote_version"
+
+    if [ -d "$TEMP_DIR/repo/scripts" ] && [ -d "$scripts_dir" ]; then
+        for existing_script in "$scripts_dir"/*; do
+            [ -f "$existing_script" ] || continue
+            local script_name
+            script_name=$(basename "$existing_script")
+            if [ -f "$TEMP_DIR/repo/scripts/$script_name" ]; then
+                sudo install -m 755 "$TEMP_DIR/repo/scripts/$script_name" "$scripts_dir/$script_name"
+                echo "Updated script: $script_name"
+            fi
+        done
+    fi
+
+    create_symlink
+    echo -e "\e[1;32mUpdate completed successfully.\e[0m"
+    echo "Restart llama to use the new version."
+}
+
 update_script() {
     if is_dev_mode; then
         echo "Development mode: Installing from local files..."
         install_from_dev
     else
         echo "Production mode: Checking for updates..."
-        setup_temp_dir
-
-        # Check main script version
-        local remote_version=$(get_remote_version)
-        local current_version="$VERSION"
-
-        if [ -z "$remote_version" ]; then
-            echo "Error: Could not fetch remote version"
-            return 1
-        fi
-
-        echo "Current version: $current_version"
-        echo "Latest version: $remote_version"
-
-        local version_compare=$(compare_versions "$current_version" "$remote_version")
-
-        if [ "$version_compare" -eq "-1" ]; then
-            echo "Update available for main script"
-            if install_from_github; then
-                echo "Update completed successfully"
-            else
-                echo "Update failed"
-                return 1
-            fi
-        else
-            echo "Main script is up to date"
-        fi
-
-        # Check individual scripts
-        read -r install_dir scripts_dir <<<"$(get_directories)"
-        if [ -d "$scripts_dir" ]; then
-            echo "Checking individual scripts for updates..."
-            local updates_needed=false
-
-            for existing_script in "$scripts_dir"/*; do
-                if [ -f "$existing_script" ]; then
-                    local script_name=$(basename "$existing_script")
-                    local current_script_version=$(get_script_version "$existing_script")
-                    local remote_script_version=$(curl -s "$GITHUB_RAW_BASE/scripts/$script_name" | get_script_version "/dev/stdin")
-
-                    if [ -n "$remote_script_version" ] && [ -n "$current_script_version" ]; then
-                        echo "Checking $script_name (Current: $current_script_version, Remote: $remote_script_version)"
-                        local script_version_compare=$(compare_versions "$current_script_version" "$remote_script_version")
-
-                        if [ "$script_version_compare" -eq "-1" ]; then
-                            echo "Update available for $script_name"
-                            updates_needed=true
-                            # Update individual script
-                            if curl -s "$GITHUB_RAW_BASE/scripts/$script_name" | sudo tee "$scripts_dir/$script_name" >/dev/null; then
-                                sudo chmod +x "$scripts_dir/$script_name"
-                                echo "Updated $script_name successfully"
-                            else
-                                echo "Failed to update $script_name"
-                            fi
-                        fi
-                    fi
-                fi
-            done
-
-            if [ "$updates_needed" = false ]; then
-                echo "All scripts are up to date"
-            fi
-        fi
+        update_from_release
     fi
 }
 

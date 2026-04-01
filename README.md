@@ -1,110 +1,123 @@
 # Llama Script Manager (LSM)
 
-LSM is a powerful script management system designed to handle installation, updates, and management of "llama" scripts. It supports both production and development environments.
+A lightweight script manager for Linux and macOS. Manages a collection of shell scripts with self-updating, environment detection, and per-script configuration.
 
-## Quick Start (Production Installation)
-
-Install LSM directly from GitHub:
+## Quick Start
 
 ```bash
-bash <(curl -s https://raw.githubusercontent.com/BrunoAFK/LSM/main/install-llama.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/BrunoAFK/LSM/main/install-llama.sh)
 ```
-
-Once installed, access LSM commands through the `llama` command:
 
 ```bash
-llama help          # Show available commands
-llama status        # Check installation status
+llama help          # Show commands and available scripts
+llama status        # Show installation info
 ```
 
-## Installation & Environments
+## Installation
 
-LSM supports two environments: Production and Development.
+### Production (recommended)
 
-### Production Environment (Recommended)
-- **Installation Directory**: `/usr/local/lib/llama`
-- **Command Access**: `llama` (available system-wide)
-- **Updates**: Automatically fetched from GitHub
-- **Installation Method**: Use the one-line installer above
+Uses the one-line installer above. Installs to `/usr/local/lib/llama`, creates a `llama` symlink in `/usr/local/bin`.
 
-### Development Environment
-- **Location**: `/opt/llama`
-- **Command Access**: `./llama` (must be in dev directory)
-- **Updates**: Local files only
-- **Installation Method**:
-  ```bash
-  git clone https://github.com/BrunoAFK/LSM.git /opt/llama
-  cd /opt/llama
-  ./llama install
-  ```
+Updates are fetched from GitHub Releases with SHA256 checksum verification.
 
-## Usage
+### Development
 
-### Basic Commands
 ```bash
-llama help          # Show help message
-llama install       # Install or reinstall components
-llama update        # Update to latest version
-llama remove        # Remove installation
-llama status        # Show current status
+git clone https://github.com/BrunoAFK/LSM.git /opt/llama
+cd /opt/llama
+./llama install
 ```
 
-### Available Scripts
-Run `llama help` to see all available scripts in your installation.
+Installs from local files. Run `./llama update` to sync local changes to the production directory.
 
-## Configuration
+## Commands
 
-LSM automatically configures itself based on your environment:
-- Production: Uses GitHub for updates and installations
-- Development: Uses local files for all operations
+```
+llama help              Show help and list available scripts
+llama install           Install or reinstall llama and scripts
+llama update            Check for updates and install them
+llama remove            Uninstall llama and all scripts
+llama status            Show environment and installed scripts
+llama <script> [args]   Run an installed script
+```
 
-## Command Reference
+## Updates
 
-| Command | Production Usage | Development Usage | Description |
-|---------|-----------------|-------------------|-------------|
-| Help | `llama help` | `./llama help` | Show available commands |
-| Install | `llama install` | `./llama install` | Install/reinstall components |
-| Update | `llama update` | `./llama update` | Update components |
-| Remove | `llama remove` | `./llama remove` | Remove installation |
-| Status | `llama status` | `./llama status` | Show environment status |
+`llama update` checks for new versions via the GitHub Releases API.
+
+**Release quarantine:** By default, only releases older than 21 days are considered for installation (`RELEASE_MIN_AGE_DAYS` in the script). This gives time for security issues in a new release to be discovered before users pull it. If a compromised release is pushed, the quarantine window provides time to detect and retract it.
+
+When a release includes a `checksums.txt` asset, downloaded files are verified against SHA256 checksums before installation. If checksums don't match, the update is aborted.
+
+If no mature releases exist yet, it falls back to pulling from the `main` branch. Only scripts already installed on your system are updated — new scripts are not added automatically.
+
+## Included Scripts
+
+### docker-update
+
+Updates all running Docker containers to their latest images. Automatically detects Docker Compose projects (via container labels) and standalone containers.
+
+```bash
+llama docker-update run         # Update all containers
+llama docker-update check       # Dry run — check without changing anything
+llama docker-update env generate  # Configure notifications
+llama docker-update env show      # Show current config
+```
+
+**How it works:**
+1. Iterates all running containers
+2. Pulls latest image, compares digest with running container
+3. Compose containers: `docker compose pull && docker compose up -d` (grouped by project)
+4. Standalone containers: backs up old image, recreates container with the same ports, volumes, env vars, restart policy, and network
+5. Prunes dangling images
+6. Sends notifications if configured
+
+**Backups:** Before recreating standalone containers, the old image is tagged as `llama-backup/<image>:pre-update`. Run `llama docker-update backups` to list them.
+
+**Notifications** are optional. Configure zero or more channels:
+
+| Channel   | Required config                                        |
+|-----------|--------------------------------------------------------|
+| Telegram  | `NOTIFY_TELEGRAM_BOT_TOKEN`, `NOTIFY_TELEGRAM_CHAT_ID` |
+| Slack     | `NOTIFY_SLACK_WEBHOOK_URL`                              |
+| Discord   | `NOTIFY_DISCORD_WEBHOOK_URL`                            |
+| Email     | `NOTIFY_SMTP_SERVER`, `NOTIFY_SMTP_PORT`, `NOTIFY_SMTP_USER`, `NOTIFY_SMTP_PASSWORD`, `NOTIFY_SMTP_FROM`, `NOTIFY_SMTP_TO` |
+| Webhook   | `NOTIFY_WEBHOOK_URL` (receives JSON POST)               |
+
+Config is stored in `~/.config/llama_env/.env` with `600` permissions.
+
+### pocketFeed
+
+Extracts URLs from an RSS/Atom feed and adds them to an ArchiveBox instance.
+
+```bash
+llama pocketFeed <feed_url>
+```
+
+### test
+
+Development/testing utility with system info and directory listing.
+
+```bash
+llama test info         # System information
+llama test list         # Directory listing
+```
 
 ## System Requirements
 
-- Bash 4.0 or later
-- `curl` for downloading files
-- `git` for cloning repository
+- Bash 4.0+
+- `curl`
+- `git`
 - `sudo` access for installation
+- Docker (for docker-update script only)
 
-## Troubleshooting
-
-### Common Issues
-
-1. **Command Not Found**
-   ```bash
-   # Reinstall production version
-   bash <(curl -s https://raw.githubusercontent.com/BrunoAFK/LSM/main/install-llama.sh)
-   ```
-
-2. **Permission Denied**
-   ```bash
-   # Check script permissions
-   ls -l $(which llama)
-   # Fix permissions if needed
-   sudo chmod +x $(which llama)
-   ```
-
-3. **Updates Not Working**
-   - Ensure you're using the production version (`which llama`)
-   - Check your internet connection
-   - Verify GitHub repository access
-
-## Author Information
+## Author
 
 - **Author**: Bruno Pavelja
 - **Website**: [pavelja.me](https://pavelja.me)
 - **GitHub**: [github.com/brunoafk](https://github.com/brunoafk)
-- **Version**: 1.0.2
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License — see [LICENSE](LICENSE) for details.

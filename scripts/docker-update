@@ -1,161 +1,684 @@
 #!/bin/bash
 
-# Information header
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
-# Version: 1.3
-# Description: This script runs Watchtower to update Docker containers, cleans up unused Docker resources, and manages a .env file for configuration.
-# How it works: The script can generate or show the .env file and uses it to configure Watchtower.
+# Version: 2.0
+# Description: Docker container updater with optional notifications. Supports both Docker Compose and standalone containers.
 
-# Define the path to the .env file
 ENV_FILE="$HOME/.config/llama_env/.env"
+ALLOWED_ENV_PREFIX="NOTIFY_"
 
-# Function to load environment variables from the .env file
+#------------------------------------------------------------------------------
+# Colors
+#------------------------------------------------------------------------------
+RED='\e[1;31m'
+GREEN='\e[1;32m'
+YELLOW='\e[1;33m'
+BLUE='\e[1;34m'
+CYAN='\e[1;36m'
+NC='\e[0m'
+
+#------------------------------------------------------------------------------
+# .env loading (safe parser, no code execution)
+#------------------------------------------------------------------------------
 load_env_file() {
-    if [ -f "$ENV_FILE" ]; then
-        # Load the .env file
-        source "$ENV_FILE"
-    else
-        echo -e "\e[1;31mError:\e[0m .env file not found at $ENV_FILE"
-        exit 1
+    [ ! -f "$ENV_FILE" ] && return 0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            ""|\#*) continue ;;
+        esac
+        if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+            local key="${line%%=*}"
+            local value="${line#*=}"
+            if [[ "$value" =~ ^\".*\"$ ]]; then
+                value="${value:1:-1}"
+            elif [[ "$value" =~ ^\'.*\'$ ]]; then
+                value="${value:1:-1}"
+            fi
+            export "$key=$value"
+        fi
+    done < "$ENV_FILE"
+}
+
+#------------------------------------------------------------------------------
+# Notification system
+#------------------------------------------------------------------------------
+notify_telegram() {
+    local message="$1"
+    local token="${NOTIFY_TELEGRAM_BOT_TOKEN:-}"
+    local chat_id="${NOTIFY_TELEGRAM_CHAT_ID:-}"
+    [ -z "$token" ] || [ -z "$chat_id" ] && return 0
+
+    curl -fsSL -X POST "https://api.telegram.org/bot${token}/sendMessage" \
+        -d chat_id="$chat_id" \
+        -d text="$message" \
+        -d parse_mode="Markdown" >/dev/null 2>&1 || \
+        echo -e "${YELLOW}Warning:${NC} Telegram notification failed"
+}
+
+notify_slack() {
+    local message="$1"
+    local webhook="${NOTIFY_SLACK_WEBHOOK_URL:-}"
+    [ -z "$webhook" ] && return 0
+
+    curl -fsSL -X POST "$webhook" \
+        -H 'Content-Type: application/json' \
+        -d "{\"text\": \"$message\"}" >/dev/null 2>&1 || \
+        echo -e "${YELLOW}Warning:${NC} Slack notification failed"
+}
+
+notify_discord() {
+    local message="$1"
+    local webhook="${NOTIFY_DISCORD_WEBHOOK_URL:-}"
+    [ -z "$webhook" ] && return 0
+
+    curl -fsSL -X POST "$webhook" \
+        -H 'Content-Type: application/json' \
+        -d "{\"content\": \"$message\"}" >/dev/null 2>&1 || \
+        echo -e "${YELLOW}Warning:${NC} Discord notification failed"
+}
+
+notify_smtp() {
+    local message="$1"
+    local server="${NOTIFY_SMTP_SERVER:-}"
+    local port="${NOTIFY_SMTP_PORT:-587}"
+    local user="${NOTIFY_SMTP_USER:-}"
+    local pass="${NOTIFY_SMTP_PASSWORD:-}"
+    local from="${NOTIFY_SMTP_FROM:-}"
+    local to="${NOTIFY_SMTP_TO:-}"
+    [ -z "$server" ] || [ -z "$to" ] && return 0
+
+    if ! command -v curl >/dev/null 2>&1; then
+        echo -e "${YELLOW}Warning:${NC} curl required for SMTP notifications"
+        return 0
+    fi
+
+    local subject="Docker Update Report"
+    local email_body="From: ${from:-$user}
+To: $to
+Subject: $subject
+Content-Type: text/plain; charset=utf-8
+
+$message"
+
+    echo "$email_body" | curl -fsSL --url "smtp://${server}:${port}" \
+        --mail-from "${from:-$user}" \
+        --mail-rcpt "$to" \
+        --upload-file - \
+        ${user:+--user "${user}:${pass}"} \
+        --ssl-reqd 2>/dev/null || \
+        echo -e "${YELLOW}Warning:${NC} SMTP notification failed"
+}
+
+notify_webhook() {
+    local message="$1"
+    local url="${NOTIFY_WEBHOOK_URL:-}"
+    [ -z "$url" ] && return 0
+
+    local hostname
+    hostname=$(hostname 2>/dev/null || echo "unknown")
+
+    curl -fsSL -X POST "$url" \
+        -H 'Content-Type: application/json' \
+        -d "{\"host\": \"$hostname\", \"event\": \"docker-update\", \"message\": \"$message\", \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+        >/dev/null 2>&1 || \
+        echo -e "${YELLOW}Warning:${NC} Webhook notification failed"
+}
+
+send_notifications() {
+    local message="$1"
+    [ -z "$message" ] && return 0
+
+    notify_telegram "$message"
+    notify_slack "$message"
+    notify_discord "$message"
+    notify_smtp "$message"
+    notify_webhook "$message"
+}
+
+has_any_notification() {
+    [ -n "${NOTIFY_TELEGRAM_BOT_TOKEN:-}" ] || \
+    [ -n "${NOTIFY_SLACK_WEBHOOK_URL:-}" ] || \
+    [ -n "${NOTIFY_DISCORD_WEBHOOK_URL:-}" ] || \
+    [ -n "${NOTIFY_SMTP_SERVER:-}" ] || \
+    [ -n "${NOTIFY_WEBHOOK_URL:-}" ]
+}
+
+#------------------------------------------------------------------------------
+# Docker helpers
+#------------------------------------------------------------------------------
+
+# Check if image uses a mutable tag (:latest or no tag at all)
+is_mutable_tag() {
+    local image="$1"
+    local tag="${image##*:}"
+    # No colon = implicit :latest, or explicit :latest
+    [[ "$image" != *":"* ]] || [[ "$tag" == "latest" ]]
+}
+
+# Tag the current image for rollback before updating
+backup_image() {
+    local container="$1"
+    local image_id
+    image_id=$(docker inspect --format '{{.Image}}' "$container" 2>/dev/null)
+    local image_name
+    image_name=$(get_container_image "$container")
+    local safe_name
+    safe_name=$(echo "$image_name" | tr '/:' '_')
+
+    if [ -n "$image_id" ]; then
+        docker tag "$image_id" "llama-backup/${safe_name}:pre-update" 2>/dev/null
     fi
 }
 
-# Function to display the contents of the .env file
+# Check if a container is managed by docker compose
+is_compose_container() {
+    local container="$1"
+    local working_dir
+    working_dir=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$container" 2>/dev/null)
+    [ -n "$working_dir" ] && [ "$working_dir" != "<no value>" ]
+}
+
+# Get compose project info for a container
+get_compose_info() {
+    local container="$1"
+    local working_dir compose_file project_name
+    working_dir=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$container" 2>/dev/null)
+    compose_file=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$container" 2>/dev/null)
+    project_name=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$container" 2>/dev/null)
+
+    # Fallback to docker-compose.yml if label is empty
+    if [ -z "$compose_file" ] || [ "$compose_file" = "<no value>" ]; then
+        if [ -f "$working_dir/docker-compose.yml" ]; then
+            compose_file="$working_dir/docker-compose.yml"
+        elif [ -f "$working_dir/compose.yml" ]; then
+            compose_file="$working_dir/compose.yml"
+        fi
+    fi
+
+    echo "$working_dir|$compose_file|$project_name"
+}
+
+# Get current image digest for a container
+get_container_digest() {
+    local container="$1"
+    docker inspect --format '{{.Image}}' "$container" 2>/dev/null
+}
+
+# Get the image name a container was created from
+get_container_image() {
+    local container="$1"
+    docker inspect --format '{{.Config.Image}}' "$container" 2>/dev/null
+}
+
+# Check if a newer image is available
+check_image_update() {
+    local image="$1"
+    local current_digest="$2"
+
+    local pull_output
+    pull_output=$(docker pull "$image" 2>&1)
+    if [ $? -ne 0 ]; then
+        echo "error"
+        return 1
+    fi
+
+    local new_digest
+    new_digest=$(docker inspect --format '{{.Id}}' "$image" 2>/dev/null)
+
+    if [ "$current_digest" != "$new_digest" ]; then
+        echo "updated"
+    else
+        echo "current"
+    fi
+}
+
+# Recreate a standalone container with the same config
+recreate_standalone_container() {
+    local container="$1"
+    local image="$2"
+
+    # Extract the full run configuration
+    local name ports volumes envs restart_policy network mounts cmd
+
+    name=$(docker inspect --format '{{.Name}}' "$container" | sed 's/^\///')
+
+    # Ports
+    ports=""
+    while IFS= read -r mapping; do
+        [ -n "$mapping" ] && ports="$ports -p $mapping"
+    done < <(docker inspect --format '{{range $p, $conf := .HostConfig.PortBindings}}{{range $conf}}{{.HostIp}}:{{.HostPort}}:{{$p}}{{"\n"}}{{end}}{{end}}' "$container" 2>/dev/null | sed 's/^://')
+
+    # Volumes/Binds
+    volumes=""
+    while IFS= read -r bind; do
+        [ -n "$bind" ] && volumes="$volumes -v $bind"
+    done < <(docker inspect --format '{{range .HostConfig.Binds}}{{.}}{{"\n"}}{{end}}' "$container" 2>/dev/null)
+
+    # Environment variables
+    envs=""
+    while IFS= read -r env; do
+        [ -n "$env" ] && envs="$envs -e $(printf '%q' "$env")"
+    done < <(docker inspect --format '{{range .Config.Env}}{{.}}{{"\n"}}{{end}}' "$container" 2>/dev/null)
+
+    # Restart policy
+    restart_policy=$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "$container" 2>/dev/null)
+    local restart_flag=""
+    if [ -n "$restart_policy" ] && [ "$restart_policy" != "no" ]; then
+        local max_retry
+        max_retry=$(docker inspect --format '{{.HostConfig.RestartPolicy.MaximumRetryCount}}' "$container" 2>/dev/null)
+        if [ "$restart_policy" = "on-failure" ] && [ "$max_retry" -gt 0 ] 2>/dev/null; then
+            restart_flag="--restart=${restart_policy}:${max_retry}"
+        else
+            restart_flag="--restart=${restart_policy}"
+        fi
+    fi
+
+    # Network
+    network=$(docker inspect --format '{{range $net, $conf := .NetworkSettings.Networks}}{{$net}}{{end}}' "$container" 2>/dev/null | head -1)
+    local network_flag=""
+    if [ -n "$network" ] && [ "$network" != "bridge" ]; then
+        network_flag="--network=$network"
+    fi
+
+    # Command
+    cmd=$(docker inspect --format '{{join .Config.Cmd " "}}' "$container" 2>/dev/null)
+    [ "$cmd" = "<no value>" ] && cmd=""
+
+    # Stop and remove old container
+    docker stop "$name" >/dev/null 2>&1
+    docker rm "$name" >/dev/null 2>&1
+
+    # Recreate
+    eval docker run -d --name "$name" \
+        $ports \
+        $volumes \
+        $envs \
+        $restart_flag \
+        $network_flag \
+        "$image" \
+        $cmd
+
+    return $?
+}
+
+#------------------------------------------------------------------------------
+# Core update logic
+#------------------------------------------------------------------------------
+do_update() {
+    local dry_run="$1"
+    local updated_containers=()
+    local failed_containers=()
+    local skipped_containers=()
+    local mutable_tag_containers=()
+    local checked=0
+
+    # Track compose projects we've already handled
+    declare -A handled_compose_projects
+
+    echo -e "${BLUE}Checking running containers for updates...${NC}"
+    echo
+
+    # Get all running containers
+    local containers
+    containers=$(docker ps --format '{{.Names}}' 2>/dev/null)
+
+    if [ -z "$containers" ]; then
+        echo -e "${YELLOW}No running containers found.${NC}"
+        return 0
+    fi
+
+    while IFS= read -r container; do
+        local image current_digest
+        image=$(get_container_image "$container")
+        current_digest=$(get_container_digest "$container")
+        checked=$((checked + 1))
+
+        echo -e "${CYAN}[$checked]${NC} Checking ${CYAN}$container${NC} ($image)..."
+
+        # Skip containers with local/unnamed images (no tag or <none>)
+        if [[ "$image" == *"<none>"* ]] || [[ "$image" != *"/"* && "$image" != *":"* && ! "$image" =~ ^[a-z]+$ ]]; then
+            echo "  Skipping (local/untagged image)"
+            skipped_containers+=("$container")
+            continue
+        fi
+
+        # Warn about mutable tags
+        if is_mutable_tag "$image"; then
+            echo -e "  ${YELLOW}Warning:${NC} uses :latest tag — no version pinning"
+            mutable_tag_containers+=("$container ($image)")
+        fi
+
+        if is_compose_container "$container"; then
+            local compose_info project_dir compose_file project_name
+            compose_info=$(get_compose_info "$container")
+            project_dir=$(echo "$compose_info" | cut -d'|' -f1)
+            compose_file=$(echo "$compose_info" | cut -d'|' -f2)
+            project_name=$(echo "$compose_info" | cut -d'|' -f3)
+
+            # Skip if we already handled this compose project
+            if [ -n "${handled_compose_projects[$project_name]:-}" ]; then
+                echo "  Already handled as part of compose project '$project_name'"
+                continue
+            fi
+            handled_compose_projects[$project_name]=1
+
+            echo "  Compose project: $project_name ($project_dir)"
+
+            if [ "$dry_run" = "true" ]; then
+                echo -e "  ${YELLOW}[DRY RUN]${NC} Would update compose project '$project_name'"
+                continue
+            fi
+
+            if [ -d "$project_dir" ]; then
+                echo "  Pulling latest images..."
+                if (cd "$project_dir" && docker compose pull -q 2>/dev/null && docker compose up -d 2>/dev/null); then
+                    echo -e "  ${GREEN}Updated compose project '$project_name'${NC}"
+                    updated_containers+=("compose:$project_name")
+                else
+                    echo -e "  ${RED}Failed to update compose project '$project_name'${NC}"
+                    failed_containers+=("compose:$project_name")
+                fi
+            else
+                echo -e "  ${RED}Compose directory not found: $project_dir${NC}"
+                failed_containers+=("compose:$project_name")
+            fi
+        else
+            # Standalone container
+            local status
+            status=$(check_image_update "$image" "$current_digest")
+
+            case "$status" in
+                "updated")
+                    if [ "$dry_run" = "true" ]; then
+                        echo -e "  ${YELLOW}[DRY RUN]${NC} Update available"
+                        continue
+                    fi
+                    echo "  New image available, backing up and recreating..."
+                    backup_image "$container"
+                    if recreate_standalone_container "$container" "$image"; then
+                        echo -e "  ${GREEN}Updated $container${NC}"
+                        updated_containers+=("$container")
+                    else
+                        echo -e "  ${RED}Failed to recreate $container${NC}"
+                        failed_containers+=("$container")
+                    fi
+                    ;;
+                "current")
+                    echo "  Already up to date"
+                    ;;
+                *)
+                    echo -e "  ${RED}Failed to check for updates${NC}"
+                    failed_containers+=("$container")
+                    ;;
+            esac
+        fi
+    done <<< "$containers"
+
+    echo
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BLUE}Summary${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "  Checked:  $checked"
+    echo -e "  Updated:  ${GREEN}${#updated_containers[@]}${NC}"
+    echo -e "  Failed:   ${RED}${#failed_containers[@]}${NC}"
+    echo -e "  Skipped:  ${#skipped_containers[@]}"
+
+    if [ ${#updated_containers[@]} -gt 0 ]; then
+        echo
+        echo -e "  ${GREEN}Updated:${NC}"
+        for c in "${updated_containers[@]}"; do
+            echo "    - $c"
+        done
+    fi
+
+    if [ ${#failed_containers[@]} -gt 0 ]; then
+        echo
+        echo -e "  ${RED}Failed:${NC}"
+        for c in "${failed_containers[@]}"; do
+            echo "    - $c"
+        done
+    fi
+
+    if [ ${#mutable_tag_containers[@]} -gt 0 ]; then
+        echo
+        echo -e "  ${YELLOW}Mutable tags (:latest):${NC}"
+        for c in "${mutable_tag_containers[@]}"; do
+            echo "    - $c"
+        done
+        echo
+        echo -e "  ${YELLOW}Tip:${NC} Pin images to specific versions in your compose files"
+        echo "  for better reproducibility (e.g. nginx:1.27 instead of nginx:latest)."
+        echo "  Old images are backed up as llama-backup/<image>:pre-update"
+    fi
+
+    # Clean up dangling images
+    if [ "$dry_run" != "true" ]; then
+        echo
+        echo "Pruning dangling images..."
+        docker image prune -f 2>/dev/null
+    fi
+
+    # Build notification message
+    if [ ${#updated_containers[@]} -gt 0 ] || [ ${#failed_containers[@]} -gt 0 ]; then
+        local hostname
+        hostname=$(hostname 2>/dev/null || echo "unknown")
+        local notify_msg="*Docker Update Report* ($hostname)
+Checked: $checked | Updated: ${#updated_containers[@]} | Failed: ${#failed_containers[@]}"
+
+        if [ ${#updated_containers[@]} -gt 0 ]; then
+            notify_msg="$notify_msg
+Updated: $(printf '%s, ' "${updated_containers[@]}" | sed 's/, $//')"
+        fi
+        if [ ${#failed_containers[@]} -gt 0 ]; then
+            notify_msg="$notify_msg
+Failed: $(printf '%s, ' "${failed_containers[@]}" | sed 's/, $//')"
+        fi
+
+        if [ "$dry_run" != "true" ]; then
+            send_notifications "$notify_msg"
+        fi
+    fi
+
+    echo
+    if [ "$dry_run" = "true" ]; then
+        echo -e "${YELLOW}Dry run complete. No changes were made.${NC}"
+    else
+        echo -e "${GREEN}Update complete.${NC}"
+    fi
+
+    [ ${#failed_containers[@]} -gt 0 ] && return 1
+    return 0
+}
+
+#------------------------------------------------------------------------------
+# .env generator
+#------------------------------------------------------------------------------
+generate_env_file() {
+    echo "Generating config at $ENV_FILE..."
+    mkdir -p "$(dirname "$ENV_FILE")"
+
+    local lines=()
+    lines+=("# Docker Update notification config")
+    lines+=("# Generated $(date -u +%Y-%m-%dT%H:%M:%SZ)")
+    lines+=("")
+
+    # Telegram
+    echo
+    echo -e "${YELLOW}Telegram (leave blank to skip):${NC}"
+    read -r -p "  Bot token: " tg_token
+    if [ -n "$tg_token" ]; then
+        read -r -p "  Chat ID: " tg_chat
+        lines+=("# Telegram")
+        lines+=("NOTIFY_TELEGRAM_BOT_TOKEN=$tg_token")
+        lines+=("NOTIFY_TELEGRAM_CHAT_ID=$tg_chat")
+        lines+=("")
+    fi
+
+    # Slack
+    echo -e "${YELLOW}Slack (leave blank to skip):${NC}"
+    read -r -p "  Webhook URL: " slack_url
+    if [ -n "$slack_url" ]; then
+        lines+=("# Slack")
+        lines+=("NOTIFY_SLACK_WEBHOOK_URL=$slack_url")
+        lines+=("")
+    fi
+
+    # Discord
+    echo -e "${YELLOW}Discord (leave blank to skip):${NC}"
+    read -r -p "  Webhook URL: " discord_url
+    if [ -n "$discord_url" ]; then
+        lines+=("# Discord")
+        lines+=("NOTIFY_DISCORD_WEBHOOK_URL=$discord_url")
+        lines+=("")
+    fi
+
+    # SMTP
+    echo -e "${YELLOW}Email/SMTP (leave blank to skip):${NC}"
+    read -r -p "  SMTP server: " smtp_server
+    if [ -n "$smtp_server" ]; then
+        read -r -p "  SMTP port (587): " smtp_port
+        read -r -p "  SMTP user: " smtp_user
+        read -r -s -p "  SMTP password (hidden): " smtp_pass
+        echo
+        read -r -p "  From address: " smtp_from
+        read -r -p "  To address: " smtp_to
+        lines+=("# SMTP")
+        lines+=("NOTIFY_SMTP_SERVER=$smtp_server")
+        lines+=("NOTIFY_SMTP_PORT=${smtp_port:-587}")
+        lines+=("NOTIFY_SMTP_USER=$smtp_user")
+        lines+=("NOTIFY_SMTP_PASSWORD=$smtp_pass")
+        lines+=("NOTIFY_SMTP_FROM=$smtp_from")
+        lines+=("NOTIFY_SMTP_TO=$smtp_to")
+        lines+=("")
+    fi
+
+    # Webhook
+    echo -e "${YELLOW}Generic webhook (leave blank to skip):${NC}"
+    read -r -p "  Webhook URL: " webhook_url
+    if [ -n "$webhook_url" ]; then
+        lines+=("# Webhook")
+        lines+=("NOTIFY_WEBHOOK_URL=$webhook_url")
+        lines+=("")
+    fi
+
+    printf '%s\n' "${lines[@]}" > "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    echo -e "${GREEN}Config saved and secured at $ENV_FILE${NC}"
+}
+
 show_env_file() {
     if [ -f "$ENV_FILE" ]; then
-        echo -e "\e[1;34mContents of $ENV_FILE:\e[0m"
-        cat "$ENV_FILE"
+        echo -e "${BLUE}Contents of $ENV_FILE:${NC}"
+        # Mask passwords/tokens
+        sed -E 's/(PASSWORD|TOKEN|token)=.+/\1=********/' "$ENV_FILE"
     else
-        echo -e "\e[1;31mError:\e[0m .env file not found at $ENV_FILE"
-        exit 1
+        echo -e "${YELLOW}No config file found at $ENV_FILE${NC}"
+        echo "Run 'llama docker-update env generate' to create one."
     fi
 }
 
-# Function to generate the .env file by asking for user input
-generate_env_file() {
-    echo "Generating .env file at $ENV_FILE..."
-    mkdir -p "$(dirname "$ENV_FILE")"  # Create the directory if it doesn't exist
-
-    # Ask the user for input
-    read -p "Enter SMTP server port (e.g., 465): " smtp_port
-    read -p "Enter SMTP server user (e.g., no-reply@pavelja.me): " smtp_user
-    read -s -p "Enter SMTP server password (hidden input): " smtp_password
-    echo
-    read -p "Enter sender email address: " email_from
-    read -p "Enter recipient email address: " email_to
-    read -p "Enter SMTP server (e.g., smtp.yandex.com): " smtp_server
-
-    # Write the input to the .env file
-    cat > "$ENV_FILE" <<EOL
-WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PORT=$smtp_port
-WATCHTOWER_NOTIFICATION_EMAIL_SERVER_USER=$smtp_user
-WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PASSWORD=$smtp_password
-WATCHTOWER_NOTIFICATION_EMAIL_FROM=$email_from
-WATCHTOWER_NOTIFICATION_EMAIL_TO=$email_to
-WATCHTOWER_NOTIFICATION_EMAIL_SERVER=$smtp_server
-EOL
-
-    # Secure the .env file
-    chmod 600 "$ENV_FILE"
-    echo -e "\e[1;32m.env file generated and secured at $ENV_FILE\e[0m"
-}
-
-# Function to display help information
+#------------------------------------------------------------------------------
+# Help
+#------------------------------------------------------------------------------
 show_help() {
-    echo -e "\e[1;34mDocker Watchtower Update Script v1.2\e[0m"
+    echo -e "${BLUE}Docker Update v2.0${NC}"
     echo
-    echo -e "\e[1;32mDescription:\e[0m"
-    echo "  This script runs Watchtower to update Docker containers, cleans up resources, and manages a .env file for configuration."
+    echo -e "${GREEN}Description:${NC}"
+    echo "  Updates Docker containers to latest images. Supports both"
+    echo "  Docker Compose and standalone containers automatically."
     echo
-    echo -e "\e[1;33mUsage:\e[0m"
-    echo "  ./watchtower_update.sh [COMMAND]"
+    echo -e "${YELLOW}Usage:${NC}"
+    echo "  llama docker-update <command>"
     echo
-    echo -e "\e[1;33mCommands:\e[0m"
-    printf "%-15s %-50s\n" "help, -h" "Show this help message"
-    printf "%-15s %-50s\n" "env generate" "Generate the .env file by asking for user input"
-    printf "%-15s %-50s\n" "env show" "Show the contents of the .env file"
-    printf "%-15s %-50s\n" "run" "Run Watchtower and clean up resources"
+    echo -e "${YELLOW}Commands:${NC}"
+    printf "%-20s %-50s\n" "run" "Pull latest images and recreate updated containers"
+    printf "%-20s %-50s\n" "check" "Check for updates without making changes (dry run)"
+    printf "%-20s %-50s\n" "backups" "List available image backups"
+    printf "%-20s %-50s\n" "env generate" "Configure notification channels"
+    printf "%-20s %-50s\n" "env show" "Show current configuration"
+    printf "%-20s %-50s\n" "help, -h" "Show this help message"
     echo
-    echo -e "\e[1;33mConfiguration:\e[0m"
-    echo "  Sensitive information is stored in a .env file located at: $ENV_FILE"
+    echo -e "${YELLOW}Notifications (all optional):${NC}"
+    echo "  Telegram, Slack, Discord, Email (SMTP), Generic webhook"
+    echo "  Configure via: llama docker-update env generate"
+    echo "  Config file: $ENV_FILE"
+    echo
+    echo -e "${YELLOW}How it works:${NC}"
+    echo "  1. Iterates all running containers"
+    echo "  2. Pulls latest image, compares digest"
+    echo "  3. Compose: docker compose pull && up -d (per project)"
+    echo "     Standalone: backs up old image, recreates with same config"
+    echo "  4. Prunes dangling images"
+    echo "  5. Sends notifications (if configured)"
 }
 
-# Check if the help argument is provided
+#------------------------------------------------------------------------------
+# Main
+#------------------------------------------------------------------------------
 if [[ "$1" == "-h" || "$1" == "help" ]]; then
     show_help
     exit 0
 fi
 
-MIN_API="1.44"
-SERVER_API="$(docker version --format '{{.Server.APIVersion}}' 2>/dev/null || true)"
+# Require docker
+if ! command -v docker >/dev/null 2>&1; then
+    echo -e "${RED}Error:${NC} Docker is not installed."
+    exit 1
+fi
 
-# Pick the higher of MIN_API and SERVER_API (sort -V handles version-ish strings)
-API_TO_USE="$(printf "%s\n%s\n" "$MIN_API" "$SERVER_API" | sed '/^$/d' | sort -V | tail -n1)"
-
-
-# Handle the custom arguments for .env management
 case "$1" in
     "env")
         case "$2" in
-            "generate")
-                generate_env_file
-                exit 0
-                ;;
-            "show")
-                show_env_file
-                exit 0
-                ;;
+            "generate") generate_env_file ;;
+            "show") show_env_file ;;
             *)
-                echo -e "\e[1;31mError:\e[0m Invalid argument for 'env'. Use 'env generate' or 'env show'."
+                echo -e "${RED}Error:${NC} Use 'env generate' or 'env show'."
                 exit 1
                 ;;
         esac
         ;;
+    "backups")
+        echo -e "${BLUE}Available image backups:${NC}"
+        local backups
+        backups=$(docker images --format '{{.Repository}}:{{.Tag}}  {{.Size}}  {{.CreatedSince}}' 2>/dev/null | grep "^llama-backup/")
+        if [ -z "$backups" ]; then
+            echo "  No backups found."
+            echo "  Backups are created automatically during 'run' for standalone containers."
+        else
+            echo "$backups" | while IFS= read -r line; do
+                echo "  $line"
+            done
+            echo
+            echo "To rollback, stop the container and run:"
+            echo "  docker tag llama-backup/<image>:pre-update <original-image>"
+        fi
+        ;;
     "run")
-        # Load environment variables from the .env file
-        load_env_file
-
-        # Check if Docker is running
         if ! docker info >/dev/null 2>&1; then
-            echo -e "\e[1;31mError:\e[0m Docker is not running. Please start Docker and try again."
+            echo -e "${RED}Error:${NC} Docker is not running."
             exit 1
         fi
-
-        # Run Watchtower to update containers
-        echo "Running Watchtower to update Docker containers..."
-        docker run --name watchtower_update \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -e DOCKER_API_VERSION="$API_TO_USE" \
-            -e WATCHTOWER_CLEANUP=true \
-            -e WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PORT="$WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PORT" \
-            -e WATCHTOWER_NOTIFICATION_EMAIL_SERVER_USER="$WATCHTOWER_NOTIFICATION_EMAIL_SERVER_USER" \
-            -e WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PASSWORD="$WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PASSWORD" \
-            -e WATCHTOWER_NOTIFICATION_EMAIL_FROM="$WATCHTOWER_NOTIFICATION_EMAIL_FROM" \
-            -e WATCHTOWER_NOTIFICATION_EMAIL_TO="$WATCHTOWER_NOTIFICATION_EMAIL_TO" \
-            -e WATCHTOWER_NOTIFICATION_EMAIL_SERVER="$WATCHTOWER_NOTIFICATION_EMAIL_SERVER" \
-            -e WATCHTOWER_NOTIFICATIONS=email \
-            containrrr/watchtower \
-            --run-once
-
-        # Check if the Watchtower container ran successfully
-        if [ $? -ne 0 ]; then
-            echo -e "\e[1;31mError:\e[0m Watchtower failed to run. Please check your Docker setup and try again."
+        load_env_file
+        if has_any_notification; then
+            echo -e "${GREEN}Notifications:${NC} enabled"
+        else
+            echo -e "${YELLOW}Notifications:${NC} disabled (no config)"
+        fi
+        echo
+        do_update "false"
+        ;;
+    "check")
+        if ! docker info >/dev/null 2>&1; then
+            echo -e "${RED}Error:${NC} Docker is not running."
             exit 1
         fi
-
-        # Remove the Watchtower container
-        echo "Removing Watchtower container..."
-        docker rm watchtower_update
-
-        # Clean up unused Docker resources
-        echo "Cleaning up unused Docker resources..."
-        docker system prune -a -f
-
-        echo -e "\e[1;32mCleanup completed successfully.\e[0m"
+        load_env_file
+        do_update "true"
         ;;
     *)
-        echo -e "\e[1;31mError:\e[0m Invalid command. Use 'help' for usage information."
+        echo -e "${RED}Error:${NC} Invalid command. Use 'help' for usage."
         exit 1
         ;;
 esac
