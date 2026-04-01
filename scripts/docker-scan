@@ -1,0 +1,391 @@
+#!/bin/bash
+
+# Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
+# Web: pavelja.me
+# Version: 1.0
+# Description: Docker security scanner using Trivy. Scans running container images and host filesystem for vulnerabilities.
+
+# Pinned Trivy image — update manually after verifying new version is safe.
+# DO NOT use :latest — Trivy had a supply chain compromise (v0.69.4-0.69.6).
+# To update: check github.com/aquasecurity/trivy/releases, pull new version,
+# get digest with: docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/aquasecurity/trivy:0.69.3
+# then replace the hash below.
+TRIVY_IMAGE="ghcr.io/aquasecurity/trivy:0.69.3"
+
+# Severity levels to report (comma-separated)
+SEVERITY="CRITICAL,HIGH,MEDIUM,LOW"
+
+# Cache directory for Trivy DB (persisted between runs)
+TRIVY_CACHE_DIR="$HOME/.cache/trivy"
+
+#------------------------------------------------------------------------------
+# Colors
+#------------------------------------------------------------------------------
+RED='\e[1;31m'
+GREEN='\e[1;32m'
+YELLOW='\e[1;33m'
+BLUE='\e[1;34m'
+CYAN='\e[1;36m'
+NC='\e[0m'
+
+#------------------------------------------------------------------------------
+# Notification support (reuses docker-update .env)
+#------------------------------------------------------------------------------
+ENV_FILE="$HOME/.config/llama_env/.env"
+
+load_env_file() {
+    [ ! -f "$ENV_FILE" ] && return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            ""|\#*) continue ;;
+        esac
+        if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+            local key="${line%%=*}"
+            local value="${line#*=}"
+            if [[ "$key" != NOTIFY_* ]]; then
+                continue
+            fi
+            if [[ "$value" =~ ^\".*\"$ ]]; then
+                value="${value:1:-1}"
+            elif [[ "$value" =~ ^\'.*\'$ ]]; then
+                value="${value:1:-1}"
+            fi
+            export "$key=$value"
+        fi
+    done < "$ENV_FILE"
+}
+
+notify_telegram() {
+    local msg="$1"
+    local token="${NOTIFY_TELEGRAM_BOT_TOKEN:-}"
+    local chat="${NOTIFY_TELEGRAM_CHAT_ID:-}"
+    [ -z "$token" ] || [ -z "$chat" ] && return 0
+    curl -fsSL -X POST "https://api.telegram.org/bot${token}/sendMessage" \
+        -d chat_id="$chat" -d text="$msg" -d parse_mode="Markdown" >/dev/null 2>&1 || true
+}
+
+notify_slack() {
+    local msg="$1"
+    local url="${NOTIFY_SLACK_WEBHOOK_URL:-}"
+    [ -z "$url" ] && return 0
+    curl -fsSL -X POST "$url" -H 'Content-Type: application/json' \
+        -d "{\"text\": \"$msg\"}" >/dev/null 2>&1 || true
+}
+
+notify_discord() {
+    local msg="$1"
+    local url="${NOTIFY_DISCORD_WEBHOOK_URL:-}"
+    [ -z "$url" ] && return 0
+    curl -fsSL -X POST "$url" -H 'Content-Type: application/json' \
+        -d "{\"content\": \"$msg\"}" >/dev/null 2>&1 || true
+}
+
+notify_webhook() {
+    local msg="$1"
+    local url="${NOTIFY_WEBHOOK_URL:-}"
+    [ -z "$url" ] && return 0
+    local hostname
+    hostname=$(hostname 2>/dev/null || echo "unknown")
+    curl -fsSL -X POST "$url" -H 'Content-Type: application/json' \
+        -d "{\"host\": \"$hostname\", \"event\": \"docker-scan\", \"message\": \"$msg\", \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+        >/dev/null 2>&1 || true
+}
+
+send_notifications() {
+    local msg="$1"
+    [ -z "$msg" ] && return 0
+    notify_telegram "$msg"
+    notify_slack "$msg"
+    notify_discord "$msg"
+    notify_webhook "$msg"
+}
+
+#------------------------------------------------------------------------------
+# Trivy runner
+#------------------------------------------------------------------------------
+
+# Run trivy via Docker — no host install needed
+run_trivy() {
+    docker run --rm \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v "$TRIVY_CACHE_DIR:/root/.cache/" \
+        "$TRIVY_IMAGE" \
+        "$@"
+}
+
+# Parse trivy JSON output and extract counts per severity
+parse_severity_counts() {
+    local json_file="$1"
+    local critical=0 high=0 medium=0 low=0
+
+    if command -v jq >/dev/null 2>&1; then
+        critical=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "$json_file" 2>/dev/null || echo 0)
+        high=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' "$json_file" 2>/dev/null || echo 0)
+        medium=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="MEDIUM")] | length' "$json_file" 2>/dev/null || echo 0)
+        low=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="LOW")] | length' "$json_file" 2>/dev/null || echo 0)
+    else
+        # Fallback: count from JSON without jq
+        critical=$(grep -c '"CRITICAL"' "$json_file" 2>/dev/null || echo 0)
+        high=$(grep -c '"HIGH"' "$json_file" 2>/dev/null || echo 0)
+        medium=$(grep -c '"MEDIUM"' "$json_file" 2>/dev/null || echo 0)
+        low=$(grep -c '"LOW"' "$json_file" 2>/dev/null || echo 0)
+    fi
+
+    echo "$critical $high $medium $low"
+}
+
+# Format severity counts with colors
+format_counts() {
+    local critical=$1 high=$2 medium=$3 low=$4
+    local parts=""
+
+    if [ "$critical" -gt 0 ]; then
+        parts="${RED}CRITICAL: $critical${NC}"
+    else
+        parts="CRITICAL: 0"
+    fi
+
+    if [ "$high" -gt 0 ]; then
+        parts="$parts  ${YELLOW}HIGH: $high${NC}"
+    else
+        parts="$parts  HIGH: 0"
+    fi
+
+    parts="$parts  MEDIUM: $medium  LOW: $low"
+    echo -e "    $parts"
+}
+
+#------------------------------------------------------------------------------
+# Scan commands
+#------------------------------------------------------------------------------
+
+scan_containers() {
+    local severity_filter="${1:-$SEVERITY}"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    trap "rm -rf '$tmpdir'" EXIT
+
+    mkdir -p "$TRIVY_CACHE_DIR"
+
+    echo -e "${BLUE}Updating Trivy vulnerability database...${NC}"
+    run_trivy image --download-db-only -q 2>/dev/null || true
+    echo
+
+    echo -e "${BLUE}Scanning running containers...${NC}"
+    echo
+
+    local containers
+    containers=$(docker ps --format '{{.Names}}' 2>/dev/null)
+
+    if [ -z "$containers" ]; then
+        echo -e "${YELLOW}No running containers found.${NC}"
+        return 0
+    fi
+
+    local checked=0
+    local total_critical=0
+    local total_high=0
+    local results=()
+    local critical_containers=()
+
+    while IFS= read -r container; do
+        local image
+        image=$(docker inspect --format '{{.Config.Image}}' "$container" 2>/dev/null)
+        checked=$((checked + 1))
+
+        echo -e "${CYAN}[$checked]${NC} Scanning ${CYAN}$container${NC} ($image)..."
+
+        local json_out="$tmpdir/${container}.json"
+
+        if run_trivy image --severity "$severity_filter" --format json \
+            --quiet "$image" > "$json_out" 2>/dev/null; then
+
+            local counts
+            counts=$(parse_severity_counts "$json_out")
+            local critical high medium low
+            read -r critical high medium low <<< "$counts"
+
+            format_counts "$critical" "$high" "$medium" "$low"
+
+            total_critical=$((total_critical + critical))
+            total_high=$((total_high + high))
+            results+=("$container|$image|$critical|$high|$medium|$low")
+
+            if [ "$critical" -gt 0 ]; then
+                critical_containers+=("$container ($image): $critical critical")
+            fi
+        else
+            echo -e "    ${RED}Scan failed${NC}"
+            results+=("$container|$image|FAIL")
+        fi
+
+        echo
+    done <<< "$containers"
+
+    # Summary
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BLUE}Scan Summary${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "  Containers scanned: $checked"
+    echo -e "  Total CRITICAL:     ${RED}$total_critical${NC}"
+    echo -e "  Total HIGH:         ${YELLOW}$total_high${NC}"
+
+    if [ ${#critical_containers[@]} -gt 0 ]; then
+        echo
+        echo -e "  ${RED}Containers with CRITICAL vulnerabilities:${NC}"
+        for c in "${critical_containers[@]}"; do
+            echo "    - $c"
+        done
+    fi
+
+    if [ $total_critical -eq 0 ] && [ $total_high -eq 0 ]; then
+        echo
+        echo -e "  ${GREEN}No critical or high vulnerabilities found.${NC}"
+    fi
+
+    # Send notification if there are critical findings
+    if [ $total_critical -gt 0 ]; then
+        local hostname
+        hostname=$(hostname 2>/dev/null || echo "unknown")
+        local notify_msg="*Docker Scan Report* ($hostname)
+Scanned: $checked containers
+CRITICAL: $total_critical | HIGH: $total_high
+
+Containers with CRITICAL issues:
+$(printf '%s\n' "${critical_containers[@]}")"
+        send_notifications "$notify_msg"
+    fi
+
+    echo
+    [ $total_critical -gt 0 ] && return 1
+    return 0
+}
+
+scan_image() {
+    local image="$1"
+    if [ -z "$image" ]; then
+        echo -e "${RED}Error:${NC} Specify an image to scan."
+        echo "Usage: llama docker-scan image <image-name>"
+        exit 1
+    fi
+
+    mkdir -p "$TRIVY_CACHE_DIR"
+
+    echo -e "${BLUE}Scanning image: ${CYAN}$image${NC}"
+    echo
+    run_trivy image --severity "$SEVERITY" "$image"
+}
+
+scan_host() {
+    mkdir -p "$TRIVY_CACHE_DIR"
+
+    echo -e "${BLUE}Scanning host filesystem for vulnerabilities...${NC}"
+    echo
+    run_trivy fs --severity "$SEVERITY" --security-checks vuln /
+}
+
+check_trivy_update() {
+    echo -e "${BLUE}Current pinned Trivy image:${NC}"
+    echo "  $TRIVY_IMAGE"
+    echo
+
+    echo -e "${BLUE}Checking for latest version...${NC}"
+    local latest_tag
+    latest_tag=$(curl -fsSL "https://api.github.com/repos/aquasecurity/trivy/releases/latest" 2>/dev/null \
+        | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/')
+
+    if [ -z "$latest_tag" ]; then
+        echo -e "${RED}Could not fetch latest version.${NC}"
+        return 1
+    fi
+
+    local current_tag="${TRIVY_IMAGE##*:}"
+    echo "  Current: $current_tag"
+    echo "  Latest:  $latest_tag"
+    echo
+
+    if [ "$current_tag" = "$latest_tag" ]; then
+        echo -e "${GREEN}Already using the latest version.${NC}"
+    else
+        echo -e "${YELLOW}New version available: $latest_tag${NC}"
+        echo
+        echo "To update, manually:"
+        echo "  1. Review the release notes at:"
+        echo "     https://github.com/aquasecurity/trivy/releases/tag/v$latest_tag"
+        echo "  2. Pull and get the digest:"
+        echo "     docker pull ghcr.io/aquasecurity/trivy:$latest_tag"
+        echo "  3. Edit TRIVY_IMAGE in this script:"
+        echo "     $(readlink -f "$0" 2>/dev/null || echo "llama docker-scan")"
+    fi
+}
+
+#------------------------------------------------------------------------------
+# Help
+#------------------------------------------------------------------------------
+show_help() {
+    echo -e "${BLUE}Docker Security Scanner v1.0${NC}"
+    echo
+    echo -e "${GREEN}Description:${NC}"
+    echo "  Scans Docker container images and host for vulnerabilities using Trivy."
+    echo "  Trivy runs as a pinned Docker container — no host install needed."
+    echo
+    echo -e "${YELLOW}Usage:${NC}"
+    echo "  llama docker-scan <command>"
+    echo
+    echo -e "${YELLOW}Commands:${NC}"
+    printf "%-25s %-50s\n" "run" "Scan all running container images"
+    printf "%-25s %-50s\n" "run --critical" "Scan only for CRITICAL vulnerabilities"
+    printf "%-25s %-50s\n" "image <name>" "Scan a specific image (full Trivy output)"
+    printf "%-25s %-50s\n" "check-trivy" "Check if a new Trivy version is available"
+    printf "%-25s %-50s\n" "help, -h" "Show this help message"
+    echo
+    echo -e "${YELLOW}Notifications:${NC}"
+    echo "  Reuses the same .env config as docker-update."
+    echo "  Notifications are sent only when CRITICAL vulnerabilities are found."
+    echo "  Config: $ENV_FILE"
+    echo
+    echo -e "${YELLOW}Trivy image:${NC}"
+    echo "  Pinned to: $TRIVY_IMAGE"
+    echo "  Run 'llama docker-scan check-trivy' to check for updates."
+    echo "  Update manually by editing TRIVY_IMAGE in this script."
+}
+
+#------------------------------------------------------------------------------
+# Main
+#------------------------------------------------------------------------------
+if [[ "$1" == "-h" || "$1" == "help" ]]; then
+    show_help
+    exit 0
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+    echo -e "${RED}Error:${NC} Docker is not installed."
+    exit 1
+fi
+
+if ! docker info >/dev/null 2>&1; then
+    echo -e "${RED}Error:${NC} Docker is not running."
+    exit 1
+fi
+
+load_env_file
+
+case "$1" in
+    "run")
+        if [ "$2" = "--critical" ]; then
+            scan_containers "CRITICAL"
+        else
+            scan_containers
+        fi
+        ;;
+    "image")
+        scan_image "$2"
+        ;;
+    "check-trivy")
+        check_trivy_update
+        ;;
+    *)
+        echo -e "${RED}Error:${NC} Invalid command. Use 'help' for usage."
+        exit 1
+        ;;
+esac

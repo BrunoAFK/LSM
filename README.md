@@ -85,6 +85,21 @@ llama docker-update env show      # Show current config
 
 Config is stored in `~/.config/llama_env/.env` with `600` permissions.
 
+### docker-scan
+
+Scans running Docker container images for vulnerabilities using [Trivy](https://github.com/aquasecurity/trivy). Trivy runs as a pinned Docker container — no host install needed.
+
+```bash
+llama docker-scan run              # Scan all running containers
+llama docker-scan run --critical   # Only show CRITICAL vulnerabilities
+llama docker-scan image nginx:1.27 # Scan a specific image (full output)
+llama docker-scan check-trivy      # Check for Trivy updates
+```
+
+Trivy is pinned to a specific version (not `:latest`) due to a past supply chain compromise (v0.69.4-0.69.6). Update manually via `check-trivy` after reviewing release notes.
+
+Notifications (CRITICAL findings only) reuse the same `.env` config as docker-update.
+
 ### pocketFeed
 
 Extracts URLs from an RSS/Atom feed and adds them to an ArchiveBox instance.
