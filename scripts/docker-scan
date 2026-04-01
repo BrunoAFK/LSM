@@ -385,6 +385,153 @@ scan_host() {
     run_trivy_host --severity "$severity_filter" "${trivy_extra[@]}"
 }
 
+# Generate a full text report to file
+generate_report() {
+    local severity_filter="${1:-$SEVERITY}"
+    local report_file="${2:-}"
+    shift 2 2>/dev/null || true
+    local trivy_extra=("$@")
+
+    if ! ensure_jq; then
+        echo -e "${RED}jq is required for report generation.${NC}"
+        exit 1
+    fi
+
+    if [ -z "$report_file" ]; then
+        report_file="docker-scan-report-$(date +%Y%m%d-%H%M%S).txt"
+    fi
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    trap "rm -rf '$tmpdir'" EXIT
+
+    mkdir -p "$TRIVY_CACHE_DIR"
+
+    echo -e "${BLUE}Updating Trivy vulnerability database...${NC}"
+    run_trivy image --download-db-only -q 2>/dev/null || true
+    echo
+
+    echo -e "${BLUE}Scanning running containers for report...${NC}"
+
+    local containers
+    containers=$(docker ps --format '{{.Names}}' 2>/dev/null)
+
+    if [ -z "$containers" ]; then
+        echo -e "${YELLOW}No running containers found.${NC}"
+        return 0
+    fi
+
+    local hostname
+    hostname=$(hostname 2>/dev/null || echo "unknown")
+
+    # Start report
+    {
+        echo "========================================"
+        echo "Docker Security Scan Report"
+        echo "Host:     $hostname"
+        echo "Date:     $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "Severity: $severity_filter"
+        echo "Trivy:    $TRIVY_IMAGE"
+        [ ${#trivy_extra[@]} -gt 0 ] && echo "Extra:    ${trivy_extra[*]}"
+        echo "========================================"
+        echo
+    } > "$report_file"
+
+    local checked=0
+    local total_critical=0 total_high=0 total_medium=0 total_low=0
+
+    while IFS= read -r container; do
+        local image
+        image=$(docker inspect --format '{{.Config.Image}}' "$container" 2>/dev/null)
+        checked=$((checked + 1))
+
+        echo -e "${CYAN}[$checked]${NC} Scanning ${CYAN}$container${NC} ($image)..."
+
+        local json_out="$tmpdir/${container}.json"
+
+        if run_trivy image --severity "$severity_filter" --format json \
+            --quiet "${trivy_extra[@]}" "$image" > "$json_out" 2>/dev/null; then
+
+            local counts
+            counts=$(parse_severity_counts "$json_out")
+            local critical high medium low
+            read -r critical high medium low <<< "$counts"
+            critical="${critical:-0}"; high="${high:-0}"; medium="${medium:-0}"; low="${low:-0}"
+
+            format_counts "$critical" "$high" "$medium" "$low"
+
+            total_critical=$((total_critical + critical))
+            total_high=$((total_high + high))
+            total_medium=$((total_medium + medium))
+            total_low=$((total_low + low))
+
+            # Write container section to report
+            {
+                echo "----------------------------------------"
+                echo "Container: $container"
+                echo "Image:     $image"
+                echo "CRITICAL: $critical  HIGH: $high  MEDIUM: $medium  LOW: $low"
+                echo "----------------------------------------"
+
+                local vuln_count
+                vuln_count=$(jq '[.Results[]?.Vulnerabilities[]?] | length' "$json_out" 2>/dev/null || echo 0)
+
+                if [ "${vuln_count:-0}" -gt 0 ]; then
+                    echo
+                    printf "%-18s %-10s %-25s %-15s %s\n" "CVE" "SEVERITY" "PACKAGE" "VERSION" "TITLE"
+                    printf "%-18s %-10s %-25s %-15s %s\n" "---" "--------" "-------" "-------" "-----"
+
+                    jq -r '[.Results[]?.Vulnerabilities[]?] | sort_by(
+                        if .Severity == "CRITICAL" then 0
+                        elif .Severity == "HIGH" then 1
+                        elif .Severity == "MEDIUM" then 2
+                        else 3 end
+                    )[] | "\(.VulnerabilityID)\t\(.Severity)\t\(.PkgName)\t\(.InstalledVersion)\t\(.Title // "N/A")"' \
+                        "$json_out" 2>/dev/null | while IFS=$'\t' read -r cve sev pkg ver title; do
+                        printf "%-18s %-10s %-25s %-15s %s\n" "$cve" "$sev" "$pkg" "$ver" "$title"
+                    done
+                else
+                    echo "  No vulnerabilities found."
+                fi
+                echo
+            } >> "$report_file"
+        else
+            {
+                echo "----------------------------------------"
+                echo "Container: $container"
+                echo "Image:     $image"
+                echo "SCAN FAILED"
+                echo
+            } >> "$report_file"
+        fi
+    done <<< "$containers"
+
+    # Summary at top (prepend)
+    local summary_file="$tmpdir/summary.txt"
+    {
+        cat "$report_file" | head -n 8  # header
+        echo
+        echo "SUMMARY"
+        echo "  Containers: $checked"
+        echo "  CRITICAL:   $total_critical"
+        echo "  HIGH:       $total_high"
+        echo "  MEDIUM:     $total_medium"
+        echo "  LOW:        $total_low"
+        echo
+        tail -n +9 "$report_file"  # rest
+    } > "$summary_file"
+    mv "$summary_file" "$report_file"
+
+    echo
+    echo -e "${GREEN}Report saved to:${NC} $report_file"
+    echo -e "  Containers: $checked | CRITICAL: $total_critical | HIGH: $total_high"
+
+    # Notify if critical
+    if [ $total_critical -gt 0 ]; then
+        send_notifications "*Docker Scan Report* ($hostname) — $total_critical CRITICAL vulnerabilities. Report: $report_file"
+    fi
+}
+
 scan_image() {
     local image="$1"
     if [ -z "$image" ]; then
@@ -453,6 +600,9 @@ show_help() {
     printf "%-30s %-50s\n" "run --verbose" "Scan with CVE details per container"
     printf "%-30s %-50s\n" "run --critical" "Only CRITICAL vulnerabilities"
     printf "%-30s %-50s\n" "run --critical --verbose" "CRITICAL with details"
+    printf "%-30s %-50s\n" "report" "Full report with all CVEs to file"
+    printf "%-30s %-50s\n" "report --critical" "Report CRITICAL only"
+    printf "%-30s %-50s\n" "report -o <file>" "Specify output file"
     printf "%-30s %-50s\n" "host" "Scan host OS for vulnerabilities"
     printf "%-30s %-50s\n" "host --critical" "Host scan, CRITICAL only"
     printf "%-30s %-50s\n" "image <name>" "Full Trivy output for one image"
@@ -471,6 +621,9 @@ show_help() {
     echo "  llama docker-scan run --verbose"
     echo "  llama docker-scan run --critical --verbose"
     echo "  llama docker-scan run --critical -- --ignore-unfixed"
+    echo "  llama docker-scan report"
+    echo "  llama docker-scan report --critical -o report.txt"
+    echo "  llama docker-scan report -- --ignore-unfixed"
     echo "  llama docker-scan host"
     echo "  llama docker-scan image nginx:1.27"
     echo "  llama docker-scan check-trivy"
@@ -540,6 +693,22 @@ case "$1" in
             shift
         done
         scan_host "$severity" "${trivy_extra[@]}"
+        ;;
+    "report")
+        severity="$SEVERITY"
+        report_file=""
+        trivy_extra=()
+        shift
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --critical) severity="CRITICAL" ;;
+                -o|--output) shift; report_file="$1" ;;
+                --) shift; trivy_extra=("$@"); break ;;
+                *) echo -e "${RED}Unknown flag:${NC} $1"; exit 1 ;;
+            esac
+            shift
+        done
+        generate_report "$severity" "$report_file" "${trivy_extra[@]}"
         ;;
     "image")
         scan_image "$2"
