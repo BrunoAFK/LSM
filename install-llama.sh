@@ -93,6 +93,7 @@ GITHUB_BRANCH="main"
 INSTALL_DIR="/usr/local/lib/llama"
 BIN_DIR="/usr/local/bin"
 REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
+GITHUB_API_BASE="https://api.github.com/repos/$GITHUB_USER/$GITHUB_REPO"
 
 #------------------------------------------------------------------------------
 # Utility Functions
@@ -174,11 +175,92 @@ setup_temp_dir() {
     trap 'cleanup_temp_files' EXIT INT TERM
 }
 
-# clone_repository: Retrieves latest LSM code from GitHub
-# Clones repository to temporary directory for installation
-# Add this function after the color definitions
+# sha256_file: Cross-platform SHA256 hash
+sha256_file() {
+    local file="$1"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    else
+        echo ""
+    fi
+}
+
+# verify_checksums: Verify downloaded files against checksums.txt
+verify_checksums() {
+    local checksum_file="$1"
+    local target_dir="$2"
+    local failed=0
+
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local expected_hash file_name
+        expected_hash=$(echo "$line" | awk '{print $1}')
+        file_name=$(basename "$(echo "$line" | awk '{print $2}')")
+
+        local target_file="$target_dir/$file_name"
+        if [ ! -f "$target_file" ]; then
+            target_file="$target_dir/scripts/$file_name"
+            [ ! -f "$target_file" ] && continue
+        fi
+
+        local actual_hash
+        actual_hash=$(sha256_file "$target_file")
+
+        if [ "$expected_hash" != "$actual_hash" ]; then
+            echo -e "${RED}Checksum FAILED:${NC} $file_name"
+            failed=1
+        else
+            debug_log "Checksum OK: $file_name"
+        fi
+    done < "$checksum_file"
+
+    return $failed
+}
+
+# clone_repository: Retrieves latest LSM code from GitHub release (with checksum
+# verification) or falls back to branch clone for older setups.
 clone_repository() {
-    print_section_header "Cloning Repository"
+    print_section_header "Downloading LSM"
+
+    # Try to get latest release info
+    local api_response release_tag checksum_url
+    api_response=$(curl -fsSL "$GITHUB_API_BASE/releases/latest" 2>/dev/null) || true
+
+    if [ -n "$api_response" ]; then
+        release_tag=$(echo "$api_response" | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+        checksum_url=$(echo "$api_response" | grep '"browser_download_url"' | grep 'checksums.txt' | head -1 | sed -E 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+    fi
+
+    if [ -n "$release_tag" ]; then
+        echo -e "${GREEN}Installing from release ${release_tag}${NC}"
+        debug_log "Found release: $release_tag"
+
+        if git clone --depth 1 --branch "$release_tag" --single-branch \
+            "$REPO_URL" "$TEMP_DIR/repo" 2>/dev/null; then
+
+            # Verify checksums if available
+            if [ -n "$checksum_url" ]; then
+                echo "Verifying checksums..."
+                if curl -fsSL -o "$TEMP_DIR/checksums.txt" "$checksum_url"; then
+                    if verify_checksums "$TEMP_DIR/checksums.txt" "$TEMP_DIR/repo"; then
+                        echo -e "${GREEN}Checksums verified${NC}"
+                    else
+                        echo -e "${RED}Checksum verification failed — aborting${NC}"
+                        exit 1
+                    fi
+                else
+                    echo -e "${YELLOW}Warning: Could not download checksums${NC}"
+                fi
+            fi
+            return 0
+        fi
+        echo -e "${YELLOW}Release clone failed, falling back to branch...${NC}"
+    fi
+
+    # Fallback: clone from branch
+    debug_log "Falling back to branch clone"
     if ! git clone --depth 1 --branch "$GITHUB_BRANCH" --single-branch \
         "$REPO_URL" "$TEMP_DIR/repo" 2>/dev/null; then
         echo -e "${RED}Error: Failed to clone repository${NC}"
