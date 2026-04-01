@@ -34,12 +34,18 @@ Installs from local files. Run `./llama update` to sync local changes to the pro
 ## Commands
 
 ```
-llama help              Show help and list available scripts
-llama install           Install or reinstall llama and scripts
-llama update            Check for updates and install them
-llama remove            Uninstall llama and all scripts
-llama status            Show environment and installed scripts
-llama <script> [args]   Run an installed script
+llama help                    Show help and installed scripts
+llama update                  Update llama and installed scripts
+llama status                  Show environment and installed scripts
+
+llama scripts list            List all available scripts (installed and not)
+llama scripts add <name>      Install a script
+llama scripts remove <name>   Remove a script
+
+llama install                 Install llama from scratch
+llama remove                  Uninstall llama completely
+
+llama <script> [args]         Run an installed script
 ```
 
 ## Updates

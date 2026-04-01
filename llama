@@ -3,10 +3,10 @@
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
 # Github: github.com/brunoafk
-# Version: 2.2.0
+# Version: 2.3.0
 # Description: Enhanced script manager with development and production environment support
 
-VERSION="2.2.0"
+VERSION="2.3.0"
 GITHUB_USER="BrunoAFK"
 GITHUB_REPO="LSM"
 GITHUB_BRANCH="main"
@@ -65,38 +65,42 @@ show_help() {
     echo "  llama <command> [args]"
     echo "  llama <script> [args]"
     echo
-    echo -e "\e[1;33mCore Commands:\e[0m"
-    printf "%-20s %-45s\n" "help, -h" "Show this help message"
-    printf "%-20s %-45s\n" "install, -i" "Install llama (or: install <script>)"
-    printf "%-20s %-45s\n" "remove, -r" "Remove llama and scripts"
-    printf "%-20s %-45s\n" "update, -u" "Update llama and scripts"
-    printf "%-20s %-45s\n" "list, -l" "List all available scripts"
-    printf "%-20s %-45s\n" "status, -s" "Show environment status"
+    echo -e "\e[1;33mCommands:\e[0m"
+    printf "%-25s %-45s\n" "help, -h" "Show this help message"
+    printf "%-25s %-45s\n" "update, -u" "Update llama and installed scripts"
+    printf "%-25s %-45s\n" "status, -s" "Show environment status"
+    printf "%-25s %-45s\n" "install, -i" "Install llama from scratch"
+    printf "%-25s %-45s\n" "remove, -r" "Uninstall llama completely"
+    echo
+    echo -e "\e[1;33mScript Management:\e[0m"
+    printf "%-25s %-45s\n" "scripts list" "Show all available scripts"
+    printf "%-25s %-45s\n" "scripts add <name>" "Install a script"
+    printf "%-25s %-45s\n" "scripts remove <name>" "Remove a script"
     echo
     echo -e "\e[1;33mExamples:\e[0m"
-    echo "  llama status"
     echo "  llama update"
-    echo "  llama list"
-    echo "  llama install docker-scan"
-    echo "  llama <script> -h"
+    echo "  llama scripts list"
+    echo "  llama scripts add docker-scan"
+    echo "  llama docker-update run"
+    echo "  llama docker-scan help"
     echo
-    echo -e "\e[1;33mAvailable Scripts:\e[0m"
+    echo -e "\e[1;33mInstalled Scripts:\e[0m"
     read -r install_dir scripts_dir <<<"$(get_directories)"
     if [ -d "$scripts_dir" ]; then
+        local found=false
         for script in "$scripts_dir"/*; do
             if [ -x "$script" ]; then
+                found=true
                 script_name=$(basename "$script")
-                # Extract description from script file (first 20 lines, case insensitive)
                 description=$(head -n 20 "$script" | grep -i "^#.*description:" | head -n 1 | sed 's/^#[ ]*[Dd]escription:[ ]*//')
-                if [ -z "$description" ]; then
-                    description="No description available"
-                fi
-                echo -e "\e[1;36m${script_name}\e[0m"
-                echo "    ${description}"
-                echo
+                printf "  \e[1;36m%-20s\e[0m %s\n" "$script_name" "${description:-No description}"
             fi
         done
+        $found || echo "  No scripts installed. Run 'llama scripts list' to see available."
+    else
+        echo "  No scripts installed. Run 'llama scripts list' to see available."
     fi
+    echo
 }
 
 # Download a file from GitHub and check the response
@@ -521,7 +525,7 @@ show_new_scripts() {
             echo -e "  \e[1;36m$name\e[0m — $desc"
         done
         echo
-        echo "Install with: llama install <script-name>"
+        echo "Install with: llama scripts add <name>"
     fi
 }
 
@@ -564,7 +568,8 @@ list_scripts() {
     echo
     echo -e "  \e[1;32m●\e[0m = installed    \e[1;31m○\e[0m = not installed"
     echo
-    echo "Install with: llama install <script-name>"
+    echo "Install with: llama scripts add <name>"
+    echo "Remove with:  llama scripts remove <name>"
 }
 
 # Install a specific script by name
@@ -572,14 +577,13 @@ install_single_script() {
     local script_name="$1"
 
     if [ -z "$script_name" ]; then
-        echo "Usage: llama install <script-name>"
-        echo "Run 'llama list' to see available scripts."
+        echo "Usage: llama scripts add <script-name>"
+        echo "Run 'llama scripts list' to see available scripts."
         return 1
     fi
 
     read -r install_dir scripts_dir <<<"$(get_directories)"
 
-    # Check if already installed
     if [ -f "$scripts_dir/$script_name" ]; then
         echo "Script '$script_name' is already installed. Use 'llama update' to update it."
         return 0
@@ -596,13 +600,34 @@ install_single_script() {
 
     if [ ! -f "$TEMP_DIR/repo/scripts/$script_name" ]; then
         echo -e "\e[1;31mError:\e[0m Script '$script_name' not found in repository."
-        echo "Run 'llama list' to see available scripts."
+        echo "Run 'llama scripts list' to see available scripts."
         return 1
     fi
 
     sudo mkdir -p "$scripts_dir"
     sudo install -m 755 "$TEMP_DIR/repo/scripts/$script_name" "$scripts_dir/$script_name"
     echo -e "\e[1;32mInstalled:\e[0m $script_name"
+}
+
+# Remove a specific script by name
+remove_single_script() {
+    local script_name="$1"
+
+    if [ -z "$script_name" ]; then
+        echo "Usage: llama scripts remove <script-name>"
+        echo "Run 'llama scripts list' to see available scripts."
+        return 1
+    fi
+
+    read -r _ scripts_dir <<<"$(get_directories)"
+
+    if [ ! -f "$scripts_dir/$script_name" ]; then
+        echo -e "\e[1;31mError:\e[0m Script '$script_name' is not installed."
+        return 1
+    fi
+
+    sudo rm "$scripts_dir/$script_name"
+    echo -e "\e[1;32mRemoved:\e[0m $script_name"
 }
 
 update_script() {
@@ -623,11 +648,7 @@ case "$1" in
     show_help
     ;;
 "install" | "-i")
-    if [ -n "$2" ]; then
-        install_single_script "$2"
-    else
-        install_script
-    fi
+    install_script
     ;;
 "remove" | "-r")
     remove_script
@@ -635,8 +656,23 @@ case "$1" in
 "update" | "-u")
     update_script
     ;;
-"list" | "-l")
-    list_scripts
+"scripts")
+    case "$2" in
+        "list" | "")
+            list_scripts
+            ;;
+        "add")
+            install_single_script "$3"
+            ;;
+        "remove")
+            remove_single_script "$3"
+            ;;
+        *)
+            echo -e "\e[1;31mError:\e[0m Unknown scripts command '$2'."
+            echo "Usage: llama scripts [list|add|remove] [name]"
+            exit 1
+            ;;
+    esac
     ;;
 "status" | "-s")
     show_status
@@ -657,8 +693,8 @@ case "$1" in
         shift
         exec "$script_path" "$@"
     else
-        echo -e "\e[1;31mError:\e[0m Script '$1' not found or not executable"
-        echo "Use '$(is_dev_mode && echo "./llama" || echo "llama") help' to see available scripts"
+        echo -e "\e[1;31mError:\e[0m Script '$1' not found."
+        echo "Run 'llama scripts list' to see available scripts."
         exit 1
     fi
     ;;
