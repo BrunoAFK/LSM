@@ -2,14 +2,13 @@
 
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
-# Version: 1.0
-# Description: Docker security scanner using Trivy. Scans running container images and host filesystem for vulnerabilities.
+# Version: 1.1
+# Description: Docker security scanner using Trivy. Scans running container images for vulnerabilities.
 
 # Pinned Trivy image — update manually after verifying new version is safe.
 # DO NOT use :latest — Trivy had a supply chain compromise (v0.69.4-0.69.6).
-# To update: check github.com/aquasecurity/trivy/releases, pull new version,
-# get digest with: docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/aquasecurity/trivy:0.69.3
-# then replace the hash below.
+# Run 'llama docker-scan check-trivy' to see if a newer version exists,
+# then manually update TRIVY_IMAGE after reviewing release notes.
 TRIVY_IMAGE="ghcr.io/aquasecurity/trivy:0.69.3"
 
 # Severity levels to report (comma-separated)
@@ -104,7 +103,6 @@ send_notifications() {
 # Trivy runner
 #------------------------------------------------------------------------------
 
-# Run trivy via Docker — no host install needed
 run_trivy() {
     docker run --rm \
         -v /var/run/docker.sock:/var/run/docker.sock \
@@ -124,34 +122,77 @@ parse_severity_counts() {
         medium=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="MEDIUM")] | length' "$json_file" 2>/dev/null || echo 0)
         low=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="LOW")] | length' "$json_file" 2>/dev/null || echo 0)
     else
-        # Fallback: count from JSON without jq
-        critical=$(grep -c '"CRITICAL"' "$json_file" 2>/dev/null || echo 0)
-        high=$(grep -c '"HIGH"' "$json_file" 2>/dev/null || echo 0)
-        medium=$(grep -c '"MEDIUM"' "$json_file" 2>/dev/null || echo 0)
-        low=$(grep -c '"LOW"' "$json_file" 2>/dev/null || echo 0)
+        critical=$(grep -c '"CRITICAL"' "$json_file" 2>/dev/null || true)
+        high=$(grep -c '"HIGH"' "$json_file" 2>/dev/null || true)
+        medium=$(grep -c '"MEDIUM"' "$json_file" 2>/dev/null || true)
+        low=$(grep -c '"LOW"' "$json_file" 2>/dev/null || true)
     fi
 
-    echo "$critical $high $medium $low"
+    # Ensure numeric values (default to 0 if empty)
+    echo "${critical:-0} ${high:-0} ${medium:-0} ${low:-0}"
+}
+
+# Extract top CVE details from JSON for verbose output
+show_cve_details() {
+    local json_file="$1"
+    local severity_filter="$2"
+    local max_items="${3:-10}"
+
+    if command -v jq >/dev/null 2>&1; then
+        local query
+        if [ -n "$severity_filter" ]; then
+            query="[.Results[]?.Vulnerabilities[]? | select(.Severity==\"$severity_filter\")] | sort_by(.CVSS // {} | to_entries | map(.value.V3Score // 0) | max // 0) | reverse | .[:${max_items}][] | \"\(.VulnerabilityID) \(.Severity) \(.PkgName) \(.InstalledVersion) \(.Title // \"No description\")\""
+        else
+            query="[.Results[]?.Vulnerabilities[]?] | sort_by(if .Severity == \"CRITICAL\" then 0 elif .Severity == \"HIGH\" then 1 elif .Severity == \"MEDIUM\" then 2 else 3 end) | .[:${max_items}][] | \"\(.VulnerabilityID) \(.Severity) \(.PkgName) \(.InstalledVersion) \(.Title // \"No description\")\""
+        fi
+
+        local output
+        output=$(jq -r "$query" "$json_file" 2>/dev/null) || return 0
+
+        [ -z "$output" ] && return 0
+
+        while IFS= read -r line; do
+            local cve sev pkg ver desc
+            cve=$(echo "$line" | awk '{print $1}')
+            sev=$(echo "$line" | awk '{print $2}')
+            pkg=$(echo "$line" | awk '{print $3}')
+            ver=$(echo "$line" | awk '{print $4}')
+            desc=$(echo "$line" | cut -d' ' -f5-)
+
+            # Truncate description
+            [ ${#desc} -gt 60 ] && desc="${desc:0:57}..."
+
+            local sev_color="$NC"
+            case "$sev" in
+                CRITICAL) sev_color="$RED" ;;
+                HIGH) sev_color="$YELLOW" ;;
+            esac
+
+            printf "      ${sev_color}%-16s${NC} %-12s %-20s %s\n" "$cve" "$sev" "$pkg ($ver)" "$desc"
+        done <<< "$output"
+    else
+        echo "      (install jq for detailed CVE output)"
+    fi
 }
 
 # Format severity counts with colors
 format_counts() {
-    local critical=$1 high=$2 medium=$3 low=$4
+    local critical="${1:-0}" high="${2:-0}" medium="${3:-0}" low="${4:-0}"
     local parts=""
 
-    if [ "$critical" -gt 0 ]; then
+    if [ "$critical" -gt 0 ] 2>/dev/null; then
         parts="${RED}CRITICAL: $critical${NC}"
     else
         parts="CRITICAL: 0"
     fi
 
-    if [ "$high" -gt 0 ]; then
+    if [ "$high" -gt 0 ] 2>/dev/null; then
         parts="$parts  ${YELLOW}HIGH: $high${NC}"
     else
         parts="$parts  HIGH: 0"
     fi
 
-    parts="$parts  MEDIUM: $medium  LOW: $low"
+    parts="$parts  MEDIUM: ${medium:-0}  LOW: ${low:-0}"
     echo -e "    $parts"
 }
 
@@ -161,6 +202,7 @@ format_counts() {
 
 scan_containers() {
     local severity_filter="${1:-$SEVERITY}"
+    local verbose="$2"
     local tmpdir
     tmpdir=$(mktemp -d)
     trap "rm -rf '$tmpdir'" EXIT
@@ -207,11 +249,17 @@ scan_containers() {
 
             format_counts "$critical" "$high" "$medium" "$low"
 
-            total_critical=$((total_critical + critical))
-            total_high=$((total_high + high))
+            # Show CVE details in verbose mode
+            if [ "$verbose" = "true" ] && [ "${critical:-0}" -gt 0 -o "${high:-0}" -gt 0 ] 2>/dev/null; then
+                echo
+                show_cve_details "$json_out" "" 10
+            fi
+
+            total_critical=$((total_critical + ${critical:-0}))
+            total_high=$((total_high + ${high:-0}))
             results+=("$container|$image|$critical|$high|$medium|$low")
 
-            if [ "$critical" -gt 0 ]; then
+            if [ "${critical:-0}" -gt 0 ] 2>/dev/null; then
                 critical_containers+=("$container ($image): $critical critical")
             fi
         else
@@ -276,14 +324,6 @@ scan_image() {
     run_trivy image --severity "$SEVERITY" "$image"
 }
 
-scan_host() {
-    mkdir -p "$TRIVY_CACHE_DIR"
-
-    echo -e "${BLUE}Scanning host filesystem for vulnerabilities...${NC}"
-    echo
-    run_trivy fs --severity "$SEVERITY" --security-checks vuln /
-}
-
 check_trivy_update() {
     echo -e "${BLUE}Current pinned Trivy image:${NC}"
     echo "  $TRIVY_IMAGE"
@@ -300,7 +340,7 @@ check_trivy_update() {
     fi
 
     local current_tag="${TRIVY_IMAGE##*:}"
-    echo "  Current: $current_tag"
+    echo "  Pinned:  $current_tag"
     echo "  Latest:  $latest_tag"
     echo
 
@@ -309,13 +349,14 @@ check_trivy_update() {
     else
         echo -e "${YELLOW}New version available: $latest_tag${NC}"
         echo
-        echo "To update, manually:"
-        echo "  1. Review the release notes at:"
+        echo "To update manually:"
+        echo "  1. Check release notes for security issues:"
         echo "     https://github.com/aquasecurity/trivy/releases/tag/v$latest_tag"
-        echo "  2. Pull and get the digest:"
+        echo "  2. Pull the new version:"
         echo "     docker pull ghcr.io/aquasecurity/trivy:$latest_tag"
-        echo "  3. Edit TRIVY_IMAGE in this script:"
-        echo "     $(readlink -f "$0" 2>/dev/null || echo "llama docker-scan")"
+        echo "  3. Edit TRIVY_IMAGE at the top of this script:"
+        echo "     $(readlink -f "$0" 2>/dev/null || echo "/usr/local/lib/llama/scripts/docker-scan")"
+        echo "     Change: TRIVY_IMAGE=\"ghcr.io/aquasecurity/trivy:$latest_tag\""
     fi
 }
 
@@ -323,31 +364,41 @@ check_trivy_update() {
 # Help
 #------------------------------------------------------------------------------
 show_help() {
-    echo -e "${BLUE}Docker Security Scanner v1.0${NC}"
+    echo -e "${BLUE}Docker Security Scanner v1.1${NC}"
     echo
     echo -e "${GREEN}Description:${NC}"
-    echo "  Scans Docker container images and host for vulnerabilities using Trivy."
+    echo "  Scans Docker container images for vulnerabilities using Trivy."
     echo "  Trivy runs as a pinned Docker container — no host install needed."
     echo
     echo -e "${YELLOW}Usage:${NC}"
-    echo "  llama docker-scan <command>"
+    echo "  llama docker-scan <command> [flags]"
     echo
     echo -e "${YELLOW}Commands:${NC}"
-    printf "%-25s %-50s\n" "run" "Scan all running container images"
-    printf "%-25s %-50s\n" "run --critical" "Scan only for CRITICAL vulnerabilities"
-    printf "%-25s %-50s\n" "image <name>" "Scan a specific image (full Trivy output)"
-    printf "%-25s %-50s\n" "check-trivy" "Check if a new Trivy version is available"
-    printf "%-25s %-50s\n" "help, -h" "Show this help message"
+    printf "%-30s %-50s\n" "run" "Scan all running containers (summary)"
+    printf "%-30s %-50s\n" "run --verbose" "Scan with CVE details per container"
+    printf "%-30s %-50s\n" "run --critical" "Only CRITICAL vulnerabilities"
+    printf "%-30s %-50s\n" "run --critical --verbose" "CRITICAL with details"
+    printf "%-30s %-50s\n" "image <name>" "Full Trivy output for one image"
+    printf "%-30s %-50s\n" "check-trivy" "Check for Trivy updates"
+    printf "%-30s %-50s\n" "help, -h" "Show this help"
+    echo
+    echo -e "${YELLOW}Examples:${NC}"
+    echo "  llama docker-scan run"
+    echo "  llama docker-scan run --verbose"
+    echo "  llama docker-scan run --critical --verbose"
+    echo "  llama docker-scan image nginx:1.27"
+    echo "  llama docker-scan check-trivy"
+    echo
+    echo -e "${YELLOW}Trivy:${NC}"
+    echo "  Pinned to: $TRIVY_IMAGE"
+    echo "  Trivy is deliberately NOT set to :latest due to a past supply"
+    echo "  chain compromise (v0.69.4-0.69.6). Use 'check-trivy' to see if"
+    echo "  a new version exists, then update manually after reviewing"
+    echo "  the release notes."
     echo
     echo -e "${YELLOW}Notifications:${NC}"
-    echo "  Reuses the same .env config as docker-update."
+    echo "  Reuses the same .env config as docker-update ($ENV_FILE)."
     echo "  Notifications are sent only when CRITICAL vulnerabilities are found."
-    echo "  Config: $ENV_FILE"
-    echo
-    echo -e "${YELLOW}Trivy image:${NC}"
-    echo "  Pinned to: $TRIVY_IMAGE"
-    echo "  Run 'llama docker-scan check-trivy' to check for updates."
-    echo "  Update manually by editing TRIVY_IMAGE in this script."
 }
 
 #------------------------------------------------------------------------------
@@ -372,11 +423,18 @@ load_env_file
 
 case "$1" in
     "run")
-        if [ "$2" = "--critical" ]; then
-            scan_containers "CRITICAL"
-        else
-            scan_containers
-        fi
+        severity="$SEVERITY"
+        verbose="false"
+        shift
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --critical) severity="CRITICAL" ;;
+                --verbose|-v) verbose="true" ;;
+                *) echo -e "${RED}Unknown flag:${NC} $1"; exit 1 ;;
+            esac
+            shift
+        done
+        scan_containers "$severity" "$verbose"
         ;;
     "image")
         scan_image "$2"
@@ -385,7 +443,7 @@ case "$1" in
         check_trivy_update
         ;;
     *)
-        echo -e "${RED}Error:${NC} Invalid command. Use 'help' for usage."
+        echo -e "${RED}Error:${NC} Unknown command '$1'. Use 'help' for usage."
         exit 1
         ;;
 esac

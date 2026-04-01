@@ -3,10 +3,10 @@
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
 # Github: github.com/brunoafk
-# Version: 2.3.0
+# Version: 2.3.1
 # Description: Enhanced script manager with development and production environment support
 
-VERSION="2.3.0"
+VERSION="2.3.1"
 GITHUB_USER="BrunoAFK"
 GITHUB_REPO="LSM"
 GITHUB_BRANCH="main"
@@ -667,9 +667,26 @@ case "$1" in
         "remove")
             remove_single_script "$3"
             ;;
+        "help" | "-h")
+            echo -e "\e[1;34mScript Management\e[0m"
+            echo
+            echo -e "\e[1;33mUsage:\e[0m"
+            echo "  llama scripts <command> [name]"
+            echo
+            echo -e "\e[1;33mCommands:\e[0m"
+            printf "  %-20s %s\n" "list" "Show all available scripts (installed and not)"
+            printf "  %-20s %s\n" "add <name>" "Install a script from the repository"
+            printf "  %-20s %s\n" "remove <name>" "Remove an installed script"
+            printf "  %-20s %s\n" "help" "Show this help"
+            echo
+            echo -e "\e[1;33mExamples:\e[0m"
+            echo "  llama scripts list"
+            echo "  llama scripts add docker-scan"
+            echo "  llama scripts remove test"
+            ;;
         *)
             echo -e "\e[1;31mError:\e[0m Unknown scripts command '$2'."
-            echo "Usage: llama scripts [list|add|remove] [name]"
+            echo "Run 'llama scripts help' for usage."
             exit 1
             ;;
     esac
