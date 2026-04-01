@@ -46,11 +46,9 @@ llama <script> [args]   Run an installed script
 
 `llama update` checks for new versions via the GitHub Releases API.
 
-**Release quarantine:** By default, only releases older than 21 days are considered for installation (`RELEASE_MIN_AGE_DAYS` in the script). This gives time for security issues in a new release to be discovered before users pull it. If a compromised release is pushed, the quarantine window provides time to detect and retract it.
-
 When a release includes a `checksums.txt` asset, downloaded files are verified against SHA256 checksums before installation. If checksums don't match, the update is aborted.
 
-If no mature releases exist yet, it falls back to pulling from the `main` branch. Only scripts already installed on your system are updated — new scripts are not added automatically.
+If no releases exist yet, it falls back to pulling from the `main` branch. Only scripts already installed on your system are updated — new scripts are not added automatically.
 
 ## Included Scripts
 

@@ -3,10 +3,10 @@
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
 # Github: github.com/brunoafk
-# Version: 2.0.0
+# Version: 2.0.1
 # Description: Enhanced script manager with development and production environment support
 
-VERSION="2.0.0"
+VERSION="2.0.1"
 GITHUB_USER="BrunoAFK"
 GITHUB_REPO="LSM"
 GITHUB_BRANCH="main"
@@ -17,10 +17,6 @@ SCRIPTS_DIR_DEV="$DEV_DIR/scripts"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/$GITHUB_BRANCH"
 GITHUB_API_BASE="https://api.github.com/repos/$GITHUB_USER/$GITHUB_REPO"
 TEMP_DIR=""
-
-# Minimum age (in days) a release must have before we'll install it.
-# This gives time for security issues to be discovered before users pull it.
-RELEASE_MIN_AGE_DAYS=21
 
 # Determines if the script is running from the development directory
 # Returns: true if running from DEV_DIR, false otherwise
@@ -286,87 +282,23 @@ compare_versions() {
     echo "0"
 }
 
-# Convert ISO 8601 date to epoch seconds (works on macOS and Linux)
-date_to_epoch() {
-    local datestr="$1"
-    if date -j -f "%Y-%m-%dT%H:%M:%SZ" "$datestr" +%s 2>/dev/null; then
-        return
-    fi
-    # Linux
-    date -d "$datestr" +%s 2>/dev/null
-}
-
-# Fetch the newest release that is at least RELEASE_MIN_AGE_DAYS old.
-# This "quarantine" window gives time for compromised releases to be caught
-# before users pull them.
+# Fetch latest release info from GitHub Releases API
 # Sets: RELEASE_TAG, RELEASE_CHECKSUM_URL
 fetch_release_info() {
-    # Get last 20 releases (paginated)
     local api_response
-    api_response=$(curl -fsSL "$GITHUB_API_BASE/releases?per_page=20" 2>/dev/null) || {
+    api_response=$(curl -fsSL "$GITHUB_API_BASE/releases/latest" 2>/dev/null) || {
         echo "Error: Could not reach GitHub API"
         return 1
     }
 
-    local now_epoch
-    now_epoch=$(date +%s)
-    local min_age_seconds=$((RELEASE_MIN_AGE_DAYS * 86400))
-
-    RELEASE_TAG=""
-    RELEASE_CHECKSUM_URL=""
-
-    # Parse releases line by line — find the newest one old enough
-    local tag published_at checksum_url
-    local in_release=false current_tag="" current_date="" current_checksum=""
-
-    while IFS= read -r line; do
-        # Detect tag_name
-        if [[ "$line" =~ \"tag_name\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
-            # Save previous release candidate if we had one pending
-            if [ -n "$current_tag" ] && [ -n "$current_date" ]; then
-                local release_epoch
-                release_epoch=$(date_to_epoch "$current_date")
-                if [ -n "$release_epoch" ]; then
-                    local age=$((now_epoch - release_epoch))
-                    if [ "$age" -ge "$min_age_seconds" ]; then
-                        RELEASE_TAG="${current_tag#v}"
-                        RELEASE_CHECKSUM_URL="$current_checksum"
-                        break
-                    fi
-                fi
-            fi
-            current_tag="${BASH_REMATCH[1]}"
-            current_date=""
-            current_checksum=""
-        fi
-
-        # Detect published_at
-        if [[ "$line" =~ \"published_at\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
-            current_date="${BASH_REMATCH[1]}"
-        fi
-
-        # Detect checksums.txt asset
-        if [[ "$line" =~ \"browser_download_url\"[[:space:]]*:[[:space:]]*\"([^\"]*checksums\.txt)\" ]]; then
-            current_checksum="${BASH_REMATCH[1]}"
-        fi
-    done <<< "$api_response"
-
-    # Check the last parsed release too
-    if [ -z "$RELEASE_TAG" ] && [ -n "$current_tag" ] && [ -n "$current_date" ]; then
-        local release_epoch
-        release_epoch=$(date_to_epoch "$current_date")
-        if [ -n "$release_epoch" ]; then
-            local age=$((now_epoch - release_epoch))
-            if [ "$age" -ge "$min_age_seconds" ]; then
-                RELEASE_TAG="${current_tag#v}"
-                RELEASE_CHECKSUM_URL="$current_checksum"
-            fi
-        fi
-    fi
+    RELEASE_TAG=$(echo "$api_response" | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/')
 
     if [ -z "$RELEASE_TAG" ]; then
+        RELEASE_TAG=""
         return 1
     fi
+
+    RELEASE_CHECKSUM_URL=$(echo "$api_response" | grep '"browser_download_url"' | grep 'checksums.txt' | head -1 | sed -E 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
 }
 
 # Verify downloaded files against checksums.txt
@@ -415,16 +347,16 @@ verify_checksums() {
 update_from_release() {
     setup_temp_dir
 
-    echo "Checking GitHub releases (quarantine: ${RELEASE_MIN_AGE_DAYS} days)..."
+    echo "Checking GitHub releases..."
     if ! fetch_release_info; then
-        echo "No mature releases found, falling back to branch update..."
+        echo "No releases found, falling back to branch update..."
         update_from_branch
         return $?
     fi
 
     local remote_version="$RELEASE_TAG"
-    echo "Current version:  $VERSION"
-    echo "Stable release:   $remote_version (${RELEASE_MIN_AGE_DAYS}+ days old)"
+    echo "Current version: $VERSION"
+    echo "Latest release:  $remote_version"
 
     local version_compare
     version_compare=$(compare_versions "$VERSION" "$remote_version")
