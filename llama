@@ -3,10 +3,10 @@
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
 # Github: github.com/brunoafk
-# Version: 2.3.1
+# Version: 2.3.2
 # Description: Enhanced script manager with development and production environment support
 
-VERSION="2.3.1"
+VERSION="2.3.2"
 GITHUB_USER="BrunoAFK"
 GITHUB_REPO="LSM"
 GITHUB_BRANCH="main"

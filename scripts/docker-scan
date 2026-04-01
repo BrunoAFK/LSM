@@ -5,11 +5,10 @@
 # Version: 1.1
 # Description: Docker security scanner using Trivy. Scans running container images for vulnerabilities.
 
-# Pinned Trivy image — update manually after verifying new version is safe.
-# DO NOT use :latest — Trivy had a supply chain compromise (v0.69.4-0.69.6).
-# Run 'llama docker-scan check-trivy' to see if a newer version exists,
-# then manually update TRIVY_IMAGE after reviewing release notes.
-TRIVY_IMAGE="ghcr.io/aquasecurity/trivy:0.69.3"
+# Default Trivy image pinned by digest — DO NOT use :latest.
+# Trivy had a supply chain compromise (v0.69.4-0.69.6).
+# Override via TRIVY_IMAGE in ~/.config/llama_env/.env
+TRIVY_IMAGE_DEFAULT="aquasec/trivy@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c"
 
 # Severity levels to report (comma-separated)
 SEVERITY="CRITICAL,HIGH,MEDIUM,LOW"
@@ -41,7 +40,7 @@ load_env_file() {
         if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
             local key="${line%%=*}"
             local value="${line#*=}"
-            if [[ "$key" != NOTIFY_* ]]; then
+            if [[ "$key" != NOTIFY_* && "$key" != "TRIVY_IMAGE" ]]; then
                 continue
             fi
             if [[ "$value" =~ ^\".*\"$ ]]; then
@@ -102,6 +101,11 @@ send_notifications() {
 #------------------------------------------------------------------------------
 # Trivy runner
 #------------------------------------------------------------------------------
+
+# Resolve TRIVY_IMAGE: .env override > default
+resolve_trivy_image() {
+    TRIVY_IMAGE="${TRIVY_IMAGE:-$TRIVY_IMAGE_DEFAULT}"
+}
 
 run_trivy() {
     docker run --rm \
@@ -325,8 +329,13 @@ scan_image() {
 }
 
 check_trivy_update() {
-    echo -e "${BLUE}Current pinned Trivy image:${NC}"
+    echo -e "${BLUE}Current Trivy image:${NC}"
     echo "  $TRIVY_IMAGE"
+    if [ -n "${TRIVY_IMAGE_FROM_ENV:-}" ]; then
+        echo "  (from .env override)"
+    else
+        echo "  (default — no override in .env)"
+    fi
     echo
 
     echo -e "${BLUE}Checking for latest version...${NC}"
@@ -339,25 +348,19 @@ check_trivy_update() {
         return 1
     fi
 
-    local current_tag="${TRIVY_IMAGE##*:}"
-    echo "  Pinned:  $current_tag"
-    echo "  Latest:  $latest_tag"
+    echo "  Latest release: $latest_tag"
     echo
 
-    if [ "$current_tag" = "$latest_tag" ]; then
-        echo -e "${GREEN}Already using the latest version.${NC}"
-    else
-        echo -e "${YELLOW}New version available: $latest_tag${NC}"
-        echo
-        echo "To update manually:"
-        echo "  1. Check release notes for security issues:"
-        echo "     https://github.com/aquasecurity/trivy/releases/tag/v$latest_tag"
-        echo "  2. Pull the new version:"
-        echo "     docker pull ghcr.io/aquasecurity/trivy:$latest_tag"
-        echo "  3. Edit TRIVY_IMAGE at the top of this script:"
-        echo "     $(readlink -f "$0" 2>/dev/null || echo "/usr/local/lib/llama/scripts/docker-scan")"
-        echo "     Change: TRIVY_IMAGE=\"ghcr.io/aquasecurity/trivy:$latest_tag\""
-    fi
+    echo "To update:"
+    echo "  1. Check release notes for security issues:"
+    echo "     https://github.com/aquasecurity/trivy/releases/tag/v$latest_tag"
+    echo
+    echo "  2. Pull the new version and get its digest:"
+    echo "     docker pull aquasec/trivy:$latest_tag"
+    echo "     docker inspect --format '{{index .RepoDigests 0}}' aquasec/trivy:$latest_tag"
+    echo
+    echo "  3. Add to $ENV_FILE:"
+    echo "     TRIVY_IMAGE=aquasec/trivy@sha256:<digest-from-step-2>"
 }
 
 #------------------------------------------------------------------------------
@@ -390,11 +393,11 @@ show_help() {
     echo "  llama docker-scan check-trivy"
     echo
     echo -e "${YELLOW}Trivy:${NC}"
-    echo "  Pinned to: $TRIVY_IMAGE"
-    echo "  Trivy is deliberately NOT set to :latest due to a past supply"
-    echo "  chain compromise (v0.69.4-0.69.6). Use 'check-trivy' to see if"
-    echo "  a new version exists, then update manually after reviewing"
-    echo "  the release notes."
+    echo "  Image: $TRIVY_IMAGE"
+    echo "  Pinned by sha256 digest (not :latest) due to a past supply"
+    echo "  chain compromise (v0.69.4-0.69.6)."
+    echo "  Override via TRIVY_IMAGE in $ENV_FILE"
+    echo "  Run 'check-trivy' for update instructions."
     echo
     echo -e "${YELLOW}Notifications:${NC}"
     echo "  Reuses the same .env config as docker-update ($ENV_FILE)."
@@ -420,6 +423,9 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 load_env_file
+# Track if TRIVY_IMAGE was set by .env before resolving default
+[ -n "${TRIVY_IMAGE:-}" ] && TRIVY_IMAGE_FROM_ENV=1
+resolve_trivy_image
 
 case "$1" in
     "run")
