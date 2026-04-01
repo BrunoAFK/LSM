@@ -493,6 +493,7 @@ update_from_release() {
     create_symlink
     echo -e "\e[1;32mUpdate completed successfully.\e[0m"
     echo "Restart llama to use the new version."
+    exit 0
 }
 
 # Fallback: update from branch (for repos without releases)
@@ -552,6 +553,7 @@ update_from_branch() {
     create_symlink
     echo -e "\e[1;32mUpdate completed successfully.\e[0m"
     echo "Restart llama to use the new version."
+    exit 0
 }
 
 update_script() {
