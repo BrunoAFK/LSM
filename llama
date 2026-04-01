@@ -3,10 +3,10 @@
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
 # Github: github.com/brunoafk
-# Version: 2.4.1
+# Version: 2.5.0
 # Description: Enhanced script manager with development and production environment support
 
-VERSION="2.4.1"
+VERSION="2.5.0"
 GITHUB_USER="BrunoAFK"
 GITHUB_REPO="LSM"
 GITHUB_BRANCH="main"
@@ -430,7 +430,6 @@ update_from_release() {
     fi
 
     create_symlink
-    show_new_scripts "$TEMP_DIR/repo/scripts"
     echo -e "\e[1;32mUpdate completed successfully.\e[0m"
     echo "Restart llama to use the new version."
     exit 0
@@ -491,7 +490,6 @@ update_from_branch() {
     fi
 
     create_symlink
-    show_new_scripts "$TEMP_DIR/repo/scripts"
     echo -e "\e[1;32mUpdate completed successfully.\e[0m"
     echo "Restart llama to use the new version."
     exit 0
