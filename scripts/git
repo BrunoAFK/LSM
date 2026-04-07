@@ -1,0 +1,135 @@
+#!/bin/bash
+
+# Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
+# Web: pavelja.me
+# Github: github.com/brunoafk
+# Version: 1.0
+# Description: Scan Git repositories under a directory and show clean/dirty status with branch divergence.
+
+clean=0
+dirty=0
+
+c_reset=$'\033[0m'
+c_red=$'\033[31m'
+c_green=$'\033[32m'
+c_yellow=$'\033[33m'
+c_blue=$'\033[34m'
+c_gray=$'\033[90m'
+
+show_help() {
+    echo -e "${c_blue}Git Status Scanner v1.0${c_reset}"
+    echo
+    echo "Usage:"
+    echo "  llama git <command> [location]"
+    echo
+    echo "Commands:"
+    printf "%-24s %s\n" "status [location]" "Scan all Git repos under location (default: current directory)"
+    printf "%-24s %s\n" "help, -h, --help" "Show this help message"
+    echo
+    echo "Examples:"
+    echo "  llama git status"
+    echo "  llama git status ~/Dev"
+    echo "  llama git help"
+}
+
+print_repo_status() {
+    local repo="$1"
+    local info files branch ahead behind
+    local ahead_color behind_color state_color state files_text
+
+    git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+
+    info=$(git -C "$repo" status --porcelain=v2 --branch 2>/dev/null) || return 0
+    files=$(printf '%s\n' "$info" | grep -c '^[12u?]')
+    branch=$(printf '%s\n' "$info" | sed -n 's/^# branch.head //p')
+    ahead=$(printf '%s\n' "$info" | sed -n 's/^# branch.ab +\([0-9]*\) -\([0-9]*\)$/\1/p')
+    behind=$(printf '%s\n' "$info" | sed -n 's/^# branch.ab +\([0-9]*\) -\([0-9]*\)$/\2/p')
+
+    [ -z "$branch" ] && branch="detached"
+    [ -z "$ahead" ] && ahead="?"
+    [ -z "$behind" ] && behind="?"
+
+    if [ "$ahead" = "?" ]; then
+        ahead_color=$c_gray
+    elif [ "$ahead" -gt 0 ] 2>/dev/null; then
+        ahead_color=$c_yellow
+    else
+        ahead_color=$c_gray
+    fi
+
+    if [ "$behind" = "?" ]; then
+        behind_color=$c_gray
+    elif [ "$behind" -gt 0 ] 2>/dev/null; then
+        behind_color=$c_red
+    else
+        behind_color=$c_gray
+    fi
+
+    if [ "$files" -gt 0 ]; then
+        state_color=$c_red
+        state="DIRTY"
+        files_text="($files)"
+        dirty=$((dirty + 1))
+    else
+        state_color=$c_green
+        state="CLEAN"
+        files_text="   -   "
+        clean=$((clean + 1))
+    fi
+
+    printf "%s%-5s%s  %s%-7s%s  %s%s%s  %s[%s%s%s | ahead=%s%s%s behind=%s%s%s]%s\n" \
+        "$state_color" "$state" "$c_reset" \
+        "$c_yellow" "$files_text" "$c_reset" \
+        "$c_blue" "$repo" "$c_reset" \
+        "$c_gray" "$c_yellow" "$branch" "$c_gray" \
+        "$ahead_color" "$ahead" "$c_gray" \
+        "$behind_color" "$behind" "$c_gray" \
+        "$c_reset"
+}
+
+scan_repositories() {
+    local location="${1:-.}"
+    local found=0
+
+    if ! command -v git >/dev/null 2>&1; then
+        echo -e "${c_red}Error:${c_reset} git is not installed."
+        exit 1
+    fi
+
+    if [ ! -d "$location" ]; then
+        echo -e "${c_red}Error:${c_reset} Location not found: $location"
+        exit 1
+    fi
+
+    while IFS= read -r -d '' gitpath; do
+        local repo
+        repo=$(dirname "$gitpath")
+        print_repo_status "$repo"
+        found=1
+    done < <(find "$location" \( -type d -name .git -o -type f -name .git \) -print0)
+
+    if [ "$found" -eq 0 ]; then
+        echo -e "${c_yellow}No Git repositories found under:${c_reset} $location"
+        return 0
+    fi
+
+    printf "\n%sSUMMARY%s  %sclean=%d%s  %sdirty=%d%s  %stotal=%d%s\n" \
+        "$c_blue" "$c_reset" \
+        "$c_green" "$clean" "$c_reset" \
+        "$c_red" "$dirty" "$c_reset" \
+        "$c_yellow" "$((clean + dirty))" "$c_reset"
+}
+
+case "$1" in
+    ""|"help"|"-h"|"--help")
+        show_help
+        ;;
+    "status")
+        scan_repositories "$2"
+        ;;
+    *)
+        echo -e "${c_red}Error:${c_reset} Unknown command '$1'."
+        echo "Run 'llama git help' for usage."
+        exit 1
+        ;;
+esac
