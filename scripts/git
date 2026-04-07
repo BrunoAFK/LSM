@@ -3,7 +3,7 @@
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
 # Github: github.com/brunoafk
-# Version: 1.0
+# Version: 1.1
 # Description: Scan Git repositories under a directory and show clean/dirty status with branch divergence.
 
 clean=0
@@ -17,7 +17,7 @@ c_blue=$'\033[1;34m'
 c_gray=$'\033[90m'
 
 show_help() {
-    echo "${c_blue}Git Status Scanner v1.0${c_reset}"
+    echo "${c_blue}Git Status Scanner v1.1${c_reset}"
     echo
     echo "${c_green}Usage:${c_reset}"
     echo "  llama git <command> [location]"
@@ -99,6 +99,7 @@ print_repo_status() {
 scan_repositories() {
     local location="${1:-.}"
     local found=0
+    local checked=0
 
     if ! command -v git >/dev/null 2>&1; then
         echo "${c_red}Error:${c_reset} git is not installed."
@@ -110,17 +111,32 @@ scan_repositories() {
         exit 1
     fi
 
+    # Discover repos with a spinner
+    local spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    printf "${c_blue}Discovering repositories under ${c_yellow}%s${c_blue}...${c_reset} " "$location"
+    local repos=()
     while IFS= read -r -d '' gitpath; do
-        local repo
-        repo=$(dirname "$gitpath")
-        print_repo_status "$repo"
-        found=1
+        repos+=("$(dirname "$gitpath")")
+        local i=$(( ${#repos[@]} % ${#spin_chars} ))
+        printf "\r${c_blue}Discovering repositories under ${c_yellow}%s${c_blue}...${c_reset} ${c_yellow}%s${c_reset} " "$location" "${spin_chars:$i:1}"
     done < <(find "$location" \( -type d -name .git -o -type f -name .git \) -print0)
+    # Clear spinner line
+    printf "\r\033[K"
 
-    if [ "$found" -eq 0 ]; then
+    if [ ${#repos[@]} -eq 0 ]; then
         echo "${c_yellow}No Git repositories found under:${c_reset} $location"
         return 0
     fi
+
+    local total=${#repos[@]}
+    echo "${c_blue}Scanning ${c_yellow}$total${c_blue} repositories...${c_reset}"
+    echo
+
+    for repo in "${repos[@]}"; do
+        checked=$((checked + 1))
+        printf "\r${c_blue}[${c_yellow}%d${c_blue}/${c_yellow}%d${c_blue}]${c_reset} " "$checked" "$total"
+        print_repo_status "$repo"
+    done
 
     printf "\n%sSUMMARY%s  %sclean=%d%s  %sdirty=%d%s  %stotal=%d%s\n" \
         "$c_blue" "$c_reset" \
