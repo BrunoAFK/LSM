@@ -3,10 +3,20 @@
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
 # Github: github.com/brunoafk
-# Version: 2.6.1
+# Version: 2.6.3
 # Description: Enhanced script manager with development and production environment support
 
-VERSION="2.6.1"
+VERSION="2.6.3"
+
+#------------------------------------------------------------------------------
+# Colors
+#------------------------------------------------------------------------------
+RED=$'\033[1;31m'
+GREEN=$'\033[1;32m'
+YELLOW=$'\033[1;33m'
+BLUE=$'\033[1;34m'
+CYAN=$'\033[1;36m'
+NC=$'\033[0m'
 GITHUB_USER="BrunoAFK"
 GITHUB_REPO="LSM"
 GITHUB_BRANCH="main"
@@ -58,33 +68,33 @@ get_bin_path() {
 show_help() {
     local env_type
     env_type=$(is_dev_mode && echo "DEVELOPMENT" || echo "PRODUCTION")
-    echo -e "\e[1;34mLlama Script Manager v$VERSION\e[0m"
-    echo -e "Environment: \e[1;33m$env_type\e[0m"
+    echo "${BLUE}Llama Script Manager v$VERSION${NC}"
+    echo "Environment: ${YELLOW}$env_type${NC}"
     echo
-    echo -e "\e[1;32mUsage:\e[0m"
+    echo "${GREEN}Usage:${NC}"
     echo "  llama <command> [args]"
     echo "  llama <script> [args]"
     echo
-    echo -e "\e[1;33mCommands:\e[0m"
+    echo "${YELLOW}Commands:${NC}"
     printf "%-25s %-45s\n" "help, -h" "Show this help message"
     printf "%-25s %-45s\n" "update, -u" "Update llama and installed scripts"
     printf "%-25s %-45s\n" "status, -s" "Show environment status"
     printf "%-25s %-45s\n" "install, -i" "Install llama from scratch"
     printf "%-25s %-45s\n" "remove, -r" "Uninstall llama completely"
     echo
-    echo -e "\e[1;33mScript Management:\e[0m"
+    echo "${YELLOW}Script Management:${NC}"
     printf "%-25s %-45s\n" "scripts list" "Show all available scripts"
     printf "%-25s %-45s\n" "scripts add <name>" "Install a script"
     printf "%-25s %-45s\n" "scripts remove <name>" "Remove a script"
     echo
-    echo -e "\e[1;33mExamples:\e[0m"
+    echo "${YELLOW}Examples:${NC}"
     echo "  llama update"
     echo "  llama scripts list"
     echo "  llama scripts add docker-scan"
     echo "  llama docker-update run"
     echo "  llama docker-scan help"
     echo
-    echo -e "\e[1;33mInstalled Scripts:\e[0m"
+    echo "${YELLOW}Installed Scripts:${NC}"
     read -r install_dir scripts_dir <<<"$(get_directories)"
     if [ -d "$scripts_dir" ]; then
         local found=false
@@ -93,7 +103,7 @@ show_help() {
                 found=true
                 script_name=$(basename "$script")
                 description=$(head -n 20 "$script" | grep -i "^#.*description:" | head -n 1 | sed 's/^#[ ]*[Dd]escription:[ ]*//')
-                printf "  \e[1;36m%-20s\e[0m %s\n" "$script_name" "${description:-No description}"
+                printf "  ${CYAN}%-20s${NC} %s\n" "$script_name" "${description:-No description}"
             fi
         done
         $found || echo "  No scripts installed. Run 'llama scripts list' to see available."
@@ -240,14 +250,15 @@ show_status() {
     local env_type=$(is_dev_mode && echo "DEVELOPMENT" || echo "PRODUCTION")
     read -r install_dir scripts_dir <<<"$(get_directories)"
 
-    echo -e "\e[1;34mLlama Script Manager Status\e[0m"
-    echo -e "Environment: \e[1;33m$env_type\e[0m"
-    echo -e "Version: \e[1;32m$VERSION\e[0m"
-    echo -e "Installation Directory: \e[1;36m$install_dir\e[0m"
-    echo -e "Scripts Directory: \e[1;36m$scripts_dir\e[0m"
+    echo "${BLUE}Llama Script Manager Status${NC}"
+    echo "Environment: ${YELLOW}$env_type${NC}"
+    echo "Version: ${GREEN}$VERSION${NC}"
+    echo "Installation Directory: ${CYAN}$install_dir${NC}"
+    echo "Scripts Directory: ${CYAN}$scripts_dir${NC}"
 
     if [ -d "$scripts_dir" ]; then
-        echo -e "\nInstalled Scripts:"
+        echo
+        echo "Installed Scripts:"
         for script in "$scripts_dir"/*; do
             if [ -x "$script" ]; then
                 echo "  - $(basename "$script")"
@@ -314,7 +325,7 @@ verify_checksums() {
     local target_dir="$2"
 
     if [ ! -f "$checksum_file" ]; then
-        echo -e "\e[1;33mWarning:\e[0m No checksums file — skipping verification"
+        echo "${YELLOW}Warning:${NC} No checksums file — skipping verification"
         return 0
     fi
 
@@ -338,12 +349,12 @@ verify_checksums() {
         actual_hash=$(sha256_file "$target_file")
 
         if [ "$expected_hash" != "$actual_hash" ]; then
-            echo -e "\e[1;31mChecksum FAILED:\e[0m $file_name"
+            echo "${RED}Checksum FAILED:${NC} $file_name"
             echo "  Expected: $expected_hash"
             echo "  Got:      $actual_hash"
             failed=1
         else
-            echo -e "  \e[1;32m✓\e[0m $file_name"
+            echo "  ${GREEN}✓${NC} $file_name"
         fi
     done < "$checksum_file"
 
@@ -373,7 +384,7 @@ update_from_release() {
         return 0
     fi
 
-    echo -e "\e[1;32mUpdate available: $VERSION → $remote_version\e[0m"
+    echo "${GREEN}Update available: $VERSION → $remote_version${NC}"
 
     # Clone the release tag
     echo "Downloading release $remote_version..."
@@ -397,15 +408,15 @@ update_from_release() {
         echo "Verifying checksums..."
         if curl -fsSL -o "$TEMP_DIR/checksums.txt" "$RELEASE_CHECKSUM_URL"; then
             if ! verify_checksums "$TEMP_DIR/checksums.txt" "$TEMP_DIR/repo"; then
-                echo -e "\e[1;31mChecksum verification failed — aborting update\e[0m"
+                echo "${RED}Checksum verification failed — aborting update${NC}"
                 return 1
             fi
-            echo -e "\e[1;32mChecksums verified\e[0m"
+            echo "${GREEN}Checksums verified${NC}"
         else
-            echo -e "\e[1;33mWarning:\e[0m Could not download checksums — proceeding without verification"
+            echo "${YELLOW}Warning:${NC} Could not download checksums — proceeding without verification"
         fi
     else
-        echo -e "\e[1;33mNote:\e[0m No checksums in this release — proceeding without verification"
+        echo "${YELLOW}Note:${NC} No checksums in this release — proceeding without verification"
     fi
 
     # Install verified files
@@ -430,7 +441,7 @@ update_from_release() {
     fi
 
     create_symlink
-    echo -e "\e[1;32mUpdate completed successfully.\e[0m"
+    echo "${GREEN}Update completed successfully.${NC}"
     echo "Restart llama to use the new version."
     exit 0
 }
@@ -458,7 +469,7 @@ update_from_branch() {
         return 0
     fi
 
-    echo -e "\e[1;32mUpdate available: $VERSION → $remote_version\e[0m"
+    echo "${GREEN}Update available: $VERSION → $remote_version${NC}"
 
     if ! git clone --depth 1 --branch "$GITHUB_BRANCH" --single-branch \
         "https://github.com/$GITHUB_USER/$GITHUB_REPO.git" "$TEMP_DIR/repo" 2>/dev/null; then
@@ -490,7 +501,7 @@ update_from_branch() {
     fi
 
     create_symlink
-    echo -e "\e[1;32mUpdate completed successfully.\e[0m"
+    echo "${GREEN}Update completed successfully.${NC}"
     echo "Restart llama to use the new version."
     exit 0
 }
@@ -516,11 +527,11 @@ show_new_scripts() {
 
     if [ ${#new_scripts[@]} -gt 0 ]; then
         echo
-        echo -e "\e[1;33mNew scripts available:\e[0m"
+        echo "${YELLOW}New scripts available:${NC}"
         for entry in "${new_scripts[@]}"; do
             local name="${entry%%|*}"
             local desc="${entry#*|}"
-            echo -e "  \e[1;36m$name\e[0m — $desc"
+            echo "  ${CYAN}$name${NC} — $desc"
         done
         echo
         echo "Install with: llama scripts add <name>"
@@ -531,7 +542,7 @@ show_new_scripts() {
 list_scripts() {
     setup_temp_dir
 
-    echo -e "\e[1;34mAvailable Scripts\e[0m"
+    echo "${BLUE}Available Scripts${NC}"
     echo
 
     # Clone repo to see all scripts
@@ -557,14 +568,14 @@ list_scripts() {
         desc="${desc:-No description}"
 
         if [ -f "$scripts_dir/$name" ]; then
-            echo -e "  \e[1;32m●\e[0m \e[1;36m$name\e[0m — $desc"
+            echo "  ${GREEN}●${NC} ${CYAN}$name${NC} — $desc"
         else
-            echo -e "  \e[1;31m○\e[0m \e[1;36m$name\e[0m — $desc"
+            echo "  ${RED}○${NC} ${CYAN}$name${NC} — $desc"
         fi
     done
 
     echo
-    echo -e "  \e[1;32m●\e[0m = installed    \e[1;31m○\e[0m = not installed"
+    echo "  ${GREEN}●${NC} = installed    ${RED}○${NC} = not installed"
     echo
     echo "Install with: llama scripts add <name>"
     echo "Remove with:  llama scripts remove <name>"
@@ -597,14 +608,14 @@ install_single_script() {
     fi
 
     if [ ! -f "$TEMP_DIR/repo/scripts/$script_name" ]; then
-        echo -e "\e[1;31mError:\e[0m Script '$script_name' not found in repository."
+        echo "${RED}Error:${NC} Script '$script_name' not found in repository."
         echo "Run 'llama scripts list' to see available scripts."
         return 1
     fi
 
     sudo mkdir -p "$scripts_dir"
     sudo install -m 755 "$TEMP_DIR/repo/scripts/$script_name" "$scripts_dir/$script_name"
-    echo -e "\e[1;32mInstalled:\e[0m $script_name"
+    echo "${GREEN}Installed:${NC} $script_name"
 }
 
 # Remove a specific script by name
@@ -620,12 +631,12 @@ remove_single_script() {
     read -r _ scripts_dir <<<"$(get_directories)"
 
     if [ ! -f "$scripts_dir/$script_name" ]; then
-        echo -e "\e[1;31mError:\e[0m Script '$script_name' is not installed."
+        echo "${RED}Error:${NC} Script '$script_name' is not installed."
         return 1
     fi
 
     sudo rm "$scripts_dir/$script_name"
-    echo -e "\e[1;32mRemoved:\e[0m $script_name"
+    echo "${GREEN}Removed:${NC} $script_name"
 }
 
 update_script() {
@@ -666,24 +677,24 @@ case "$1" in
             remove_single_script "$3"
             ;;
         "help" | "-h")
-            echo -e "\e[1;34mScript Management\e[0m"
+            echo "${BLUE}Script Management${NC}"
             echo
-            echo -e "\e[1;33mUsage:\e[0m"
+            echo "${YELLOW}Usage:${NC}"
             echo "  llama scripts <command> [name]"
             echo
-            echo -e "\e[1;33mCommands:\e[0m"
+            echo "${YELLOW}Commands:${NC}"
             printf "  %-20s %s\n" "list" "Show all available scripts (installed and not)"
             printf "  %-20s %s\n" "add <name>" "Install a script from the repository"
             printf "  %-20s %s\n" "remove <name>" "Remove an installed script"
             printf "  %-20s %s\n" "help" "Show this help"
             echo
-            echo -e "\e[1;33mExamples:\e[0m"
+            echo "${YELLOW}Examples:${NC}"
             echo "  llama scripts list"
             echo "  llama scripts add docker-scan"
             echo "  llama scripts remove test"
             ;;
         *)
-            echo -e "\e[1;31mError:\e[0m Unknown scripts command '$2'."
+            echo "${RED}Error:${NC} Unknown scripts command '$2'."
             echo "Run 'llama scripts help' for usage."
             exit 1
             ;;
@@ -708,7 +719,7 @@ case "$1" in
         shift
         exec "$script_path" "$@"
     else
-        echo -e "\e[1;31mError:\e[0m Script '$1' not found."
+        echo "${RED}Error:${NC} Script '$1' not found."
         echo "Run 'llama scripts list' to see available scripts."
         exit 1
     fi

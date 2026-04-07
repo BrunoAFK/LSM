@@ -11,21 +11,30 @@
 #   - LOCATION: Directory where the output file will be stored.
 #   - HASH: Random 32-character hash for unique output file names.
 
+#------------------------------------------------------------------------------
+# Colors
+#------------------------------------------------------------------------------
+RED=$'\033[1;31m'
+GREEN=$'\033[1;32m'
+YELLOW=$'\033[1;33m'
+BLUE=$'\033[1;34m'
+NC=$'\033[0m'
+
 # Function to display help information
 help_function() {
-    echo -e "\e[1;34mScript Name: URL Extractor and Archiver\e[0m"
-    echo -e "\e[1;32mDescription:\e[0m This script extracts URLs from a provided feed URL and adds them to ArchiveBox using Docker Compose."
+    echo "${BLUE}Script Name: URL Extractor and Archiver${NC}"
+    echo "${GREEN}Description:${NC} This script extracts URLs from a provided feed URL and adds them to ArchiveBox using Docker Compose."
     echo
-    echo -e "\e[1;33mUsage:\e[0m"
+    echo "${YELLOW}Usage:${NC}"
     echo "  $0 <feed_url>"
     echo
-    echo -e "\e[1;33mExample:\e[0m"
+    echo "${YELLOW}Example:${NC}"
     echo "  $0 https://rss.feed.com/feed"
     echo
-    echo -e "\e[1;33mAvailable Commands:\e[0m"
+    echo "${YELLOW}Available Commands:${NC}"
     printf "  %-30s %s\n" "<feed_url>" "The URL of the feed to extract links from"
     echo
-    echo -e "\e[1;33mNotes:\e[0m"
+    echo "${YELLOW}Notes:${NC}"
     echo "  - Make sure ArchiveBox and Docker are properly set up before running this script."
     echo "  - The script will clean up the exported file after adding URLs to ArchiveBox."
 }
@@ -64,7 +73,7 @@ fi
 
 # Check if URL argument is provided
 if [ $# -ne 1 ]; then
-    echo -e "\e[1;31mError:\e[0m Missing URL argument."
+    echo "${RED}Error:${NC} Missing URL argument."
     echo "Usage: $0 <feed_url>"
     echo "Use -h or --help for more information."
     exit 1

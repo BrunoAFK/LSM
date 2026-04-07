@@ -13,11 +13,11 @@
 # Configuration and Setup
 #------------------------------------------------------------------------------
 # Color codes for consistent output formatting
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[1;33m'
+BLUE=$'\033[0;34m'
+NC=$'\033[0m' # No Color
 
 # Version
 VERSION="1.1.2"
@@ -47,9 +47,9 @@ handle_error() {
     set +e
     trap - ERR
     
-    echo -e "${RED}Installation failed at line $line_number with exit code $exit_code${NC}" >&2
+    echo "${RED}Installation failed at line $line_number with exit code $exit_code${NC}" >&2
     if [ "$DEBUG" = true ]; then
-        echo -e "${BLUE}Debug log is available at: /tmp/lsm_install_debug.log${NC}" >&2
+        echo "${BLUE}Debug log is available at: /tmp/lsm_install_debug.log${NC}" >&2
     fi
     exit 1
 }
@@ -59,7 +59,7 @@ cleanup_temp_files() {
     set +e
     trap - ERR
     
-    echo -e "${YELLOW}Cleaning up temporary files...${NC}"
+    echo "${YELLOW}Cleaning up temporary files...${NC}"
     
     # Remove temporary directory and its contents
     if [ -d "$TEMP_DIR" ]; then
@@ -104,7 +104,7 @@ GITHUB_API_BASE="https://api.github.com/repos/$GITHUB_USER/$GITHUB_REPO"
 # Add this helper function after the color definitions
 debug_log() {
     if [ "$DEBUG" = true ]; then
-        echo -e "${BLUE}DEBUG: $1${NC}" >&2 # Write to stderr
+        echo "${BLUE}DEBUG: $1${NC}" >&2 # Write to stderr
         echo "$(date '+%Y-%m-%d %H:%M:%S') - DEBUG: $1" >>"/tmp/lsm_install_debug.log"
     fi
 }
@@ -113,7 +113,7 @@ debug_log() {
 print_section_header() {
     local title=$1
     if [ "$DEBUG" = true ]; then
-        echo -e "${BLUE}=== $title (v${VERSION}) ===${NC}"
+        echo "${BLUE}=== $title (v${VERSION}) ===${NC}"
         debug_log "Starting section: $title"
     fi
 }
@@ -128,7 +128,7 @@ print_section_header() {
 check_requirements() {
     print_section_header "Checking Requirements"
     if ! command -v git &>/dev/null; then
-        echo -e "${RED}Error: git is not installed${NC}"
+        echo "${RED}Error: git is not installed${NC}"
         echo "Please install git first:"
         echo "  For Ubuntu/Debian: sudo apt-get install git"
         echo "  For MacOS: brew install git"
@@ -136,7 +136,7 @@ check_requirements() {
     fi
 
     if ! command -v curl &>/dev/null; then
-        echo -e "${RED}Error: curl is not installed${NC}"
+        echo "${RED}Error: curl is not installed${NC}"
         echo "Please install curl first:"
         echo "  For Ubuntu/Debian: sudo apt-get install curl"
         echo "  For MacOS: brew install curl"
@@ -150,7 +150,7 @@ check_requirements() {
 check_repository() {
     print_section_header "Checking Repository"
     if ! curl --output /dev/null --silent --head --fail "https://github.com/$GITHUB_USER/$GITHUB_REPO"; then
-        echo -e "${RED}Error: Repository $REPO_URL is not accessible${NC}"
+        echo "${RED}Error: Repository $REPO_URL is not accessible${NC}"
         echo "Please check:"
         echo "  1. Repository exists and is public"
         echo "  2. Your internet connection"
@@ -209,7 +209,7 @@ verify_checksums() {
         actual_hash=$(sha256_file "$target_file")
 
         if [ "$expected_hash" != "$actual_hash" ]; then
-            echo -e "${RED}Checksum FAILED:${NC} $file_name"
+            echo "${RED}Checksum FAILED:${NC} $file_name"
             failed=1
         else
             debug_log "Checksum OK: $file_name"
@@ -234,7 +234,7 @@ clone_repository() {
     fi
 
     if [ -n "$release_tag" ]; then
-        echo -e "${GREEN}Installing from release ${release_tag}${NC}"
+        echo "${GREEN}Installing from release ${release_tag}${NC}"
         debug_log "Found release: $release_tag"
 
         if git clone --depth 1 --branch "$release_tag" --single-branch \
@@ -245,25 +245,25 @@ clone_repository() {
                 echo "Verifying checksums..."
                 if curl -fsSL -o "$TEMP_DIR/checksums.txt" "$checksum_url"; then
                     if verify_checksums "$TEMP_DIR/checksums.txt" "$TEMP_DIR/repo"; then
-                        echo -e "${GREEN}Checksums verified${NC}"
+                        echo "${GREEN}Checksums verified${NC}"
                     else
-                        echo -e "${RED}Checksum verification failed — aborting${NC}"
+                        echo "${RED}Checksum verification failed — aborting${NC}"
                         exit 1
                     fi
                 else
-                    echo -e "${YELLOW}Warning: Could not download checksums${NC}"
+                    echo "${YELLOW}Warning: Could not download checksums${NC}"
                 fi
             fi
             return 0
         fi
-        echo -e "${YELLOW}Release clone failed, falling back to branch...${NC}"
+        echo "${YELLOW}Release clone failed, falling back to branch...${NC}"
     fi
 
     # Fallback: clone from branch
     debug_log "Falling back to branch clone"
     if ! git clone --depth 1 --branch "$GITHUB_BRANCH" --single-branch \
         "$REPO_URL" "$TEMP_DIR/repo" 2>/dev/null; then
-        echo -e "${RED}Error: Failed to clone repository${NC}"
+        echo "${RED}Error: Failed to clone repository${NC}"
         exit 1
     fi
 }
@@ -300,7 +300,7 @@ select_scripts() {
     # Check if directory exists and is not empty
     if [ ! -d "$scripts_dir" ]; then
         debug_log "ERROR: Scripts directory not found: $scripts_dir"
-        echo -e "${YELLOW}Warning: Scripts directory not found${NC}"
+        echo "${YELLOW}Warning: Scripts directory not found${NC}"
         return 1
     fi
 
@@ -310,7 +310,7 @@ select_scripts() {
 
     if [ "$file_count" -eq 0 ]; then
         debug_log "ERROR: No scripts found in repository"
-        echo -e "${YELLOW}Warning: No scripts found in repository${NC}"
+        echo "${YELLOW}Warning: No scripts found in repository${NC}"
         return 1
     fi
 
@@ -318,7 +318,7 @@ select_scripts() {
     debug_log "Checking for dialog installation"
     if ! command -v dialog >/dev/null 2>&1; then
         debug_log "Dialog not found, attempting installation"
-        echo -e "${YELLOW}Dialog is not installed. Attempting to install...${NC}"
+        echo "${YELLOW}Dialog is not installed. Attempting to install...${NC}"
         DIALOG_INSTALLED_BY_LSM=true
 
         if command -v apt-get >/dev/null 2>&1; then
@@ -355,14 +355,14 @@ select_scripts() {
             fi
         else
             debug_log "ERROR: No supported package manager found"
-            echo -e "${RED}Error: Could not install dialog automatically${NC}"
+            echo "${RED}Error: Could not install dialog automatically${NC}"
             exit 1
         fi
 
         # Verify dialog installation
         if ! command -v dialog >/dev/null 2>&1; then
             debug_log "ERROR: Dialog installation verification failed"
-            echo -e "${RED}Error: Failed to install dialog${NC}"
+            echo "${RED}Error: Failed to install dialog${NC}"
             exit 1
         fi
         debug_log "Dialog installation verified successfully"
@@ -395,7 +395,7 @@ select_scripts() {
 
     # Print debug messages before launching dialog
     debug_log "Launching dialog command..."
-    echo -e "${BLUE}Launching dialog...${NC}"
+    echo "${BLUE}Launching dialog...${NC}"
 
     # In the select_scripts function, replace the dialog command with:
     if dialog --title "Script Selection" \
@@ -432,7 +432,8 @@ select_scripts() {
     # Add explicit debug logging for the Install All case
     if [ "$dialog_status" -eq 3 ]; then
         debug_log "Install All option selected"
-        echo -e "\n${BLUE}Installing all scripts...${NC}"
+        echo
+        echo "${BLUE}Installing all scripts...${NC}"
 
         # Clear and reinitialize the SELECTED_SCRIPTS array
         declare -A SELECTED_SCRIPTS=()
@@ -442,20 +443,20 @@ select_scripts() {
             script_basename=$(basename "$script")
             SELECTED_SCRIPTS[$script_basename]=1
             debug_log "Marking for installation: $script_basename"
-            echo -e "  - ${GREEN}$script_basename${NC}"
+            echo "  - ${GREEN}$script_basename${NC}"
         done < <(find "$scripts_dir" -type f -print0)
 
         # Verify selections
         if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
             debug_log "ERROR: No scripts were marked for installation"
-            echo -e "${RED}Error: No scripts were marked for installation${NC}"
+            echo "${RED}Error: No scripts were marked for installation${NC}"
             exit 1
         fi
 
         # Before copying each script:
-        echo -e "${YELLOW}Installing ${#SELECTED_SCRIPTS[@]} scripts...${NC}"
+        echo "${YELLOW}Installing ${#SELECTED_SCRIPTS[@]} scripts...${NC}"
         for script_name in "${!SELECTED_SCRIPTS[@]}"; do
-            echo -e "${GREEN}- Installing: $script_name${NC}"
+            echo "${GREEN}- Installing: $script_name${NC}"
         done
 
         debug_log "Total scripts marked for installation: ${#SELECTED_SCRIPTS[@]}"
@@ -478,7 +479,8 @@ select_scripts() {
         debug_log "Total scripts selected: ${#SELECTED_SCRIPTS[@]}"
     else
         debug_log "Dialog cancelled or error occurred (status: $dialog_status)"
-        echo -e "\n${YELLOW}Installation cancelled or error occurred${NC}"
+        echo
+        echo "${YELLOW}Installation cancelled or error occurred${NC}"
         exit 1
     fi
 }
@@ -498,7 +500,7 @@ copy_files() {
     # Add verification of selected scripts
     if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
         debug_log "ERROR: No scripts selected for installation"
-        echo -e "${RED}Error: No scripts selected for installation${NC}"
+        echo "${RED}Error: No scripts selected for installation${NC}"
         exit 1
     fi
     # List all selected scripts for verification
@@ -518,7 +520,7 @@ copy_files() {
                 script_name=$(basename "$script")
                 debug_log "Checking script: $script_name (selected: ${SELECTED_SCRIPTS[$script_name]:-0})"
                 if [ "${SELECTED_SCRIPTS[$script_name]:-0}" -eq 1 ]; then
-                    echo -e "${GREEN}Installing: $script_name${NC}"
+                    echo "${GREEN}Installing: $script_name${NC}"
                     debug_log "Copying $script_name to $INSTALL_DIR/scripts/"
                     sudo cp "$script" "$INSTALL_DIR/scripts/"
                     sudo chmod +x "$INSTALL_DIR/scripts/$script_name"
@@ -567,7 +569,7 @@ cleanup_dialog() {
 # Add this function after the color definitions
 main() {
     debug_log "Starting main installation process"
-    echo -e "${GREEN}Starting Llama Script Manager Installation...${NC}"
+    echo "${GREEN}Starting Llama Script Manager Installation...${NC}"
 
     debug_log "Checking requirements"
     check_requirements
@@ -597,14 +599,14 @@ main() {
     debug_log "Cleaning up dialog"
     cleanup_dialog
 
-    echo -e "${GREEN}Installation completed successfully!${NC}"
-    echo -e "Run ${YELLOW}llama help${NC} to get started."
+    echo "${GREEN}Installation completed successfully!${NC}"
+    echo "Run ${YELLOW}llama help${NC} to get started."
     debug_log "Installation completed"
     echo
     "$INSTALL_DIR/llama" status
     echo
-    echo -e "${GREEN}Installation completed successfully!${NC}"
-    echo -e "Run ${YELLOW}llama help${NC} to get started."
+    echo "${GREEN}Installation completed successfully!${NC}"
+    echo "Run ${YELLOW}llama help${NC} to get started."
     
     # Disable error handling before exiting
     set +e
