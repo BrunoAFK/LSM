@@ -3,10 +3,10 @@
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
 # Github: github.com/brunoafk
-# Version: 2.6.5
+# Version: 2.6.6
 # Description: Enhanced script manager with development and production environment support
 
-VERSION="2.6.5"
+VERSION="2.6.6"
 
 #------------------------------------------------------------------------------
 # Colors
@@ -17,12 +17,19 @@ YELLOW=$'\033[1;33m'
 BLUE=$'\033[1;34m'
 CYAN=$'\033[1;36m'
 NC=$'\033[0m'
+SUDO_READY=0
+USE_SUDO=0
 GITHUB_USER="BrunoAFK"
 GITHUB_REPO="LSM"
 GITHUB_BRANCH="main"
 DEV_DIR="/opt/llama"
-INSTALL_DIR="/usr/local/lib/llama"
-SCRIPTS_DIR_PROD="$INSTALL_DIR/scripts"
+DEFAULT_INSTALL_DIR="/usr/local/lib/llama"
+DEFAULT_BIN_DIR="/usr/local/bin"
+CONFIG_DIR="$HOME/.config/llama_env"
+INSTALL_CONFIG_FILE="$CONFIG_DIR/install.conf"
+INSTALL_DIR="$DEFAULT_INSTALL_DIR"
+BIN_DIR="$DEFAULT_BIN_DIR"
+SCRIPTS_DIR_PROD=""
 SCRIPTS_DIR_DEV="$DEV_DIR/scripts"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/$GITHUB_BRANCH"
 GITHUB_API_BASE="https://api.github.com/repos/$GITHUB_USER/$GITHUB_REPO"
@@ -34,6 +41,32 @@ is_dev_mode() {
     local script_dir
     script_dir="$(cd -- "$(dirname -- "$0")" && pwd -P)"
     [[ "$script_dir" == "$DEV_DIR" ]]
+}
+
+load_install_config() {
+    local line key value
+
+    [ -f "$INSTALL_CONFIG_FILE" ] || return 0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            ""|\#*)
+                continue
+                ;;
+            *=*)
+                key="${line%%=*}"
+                value="${line#*=}"
+                case "$key" in
+                    INSTALL_DIR)
+                        [ -n "$value" ] && INSTALL_DIR="$value"
+                        ;;
+                    BIN_DIR)
+                        [ -n "$value" ] && BIN_DIR="$value"
+                        ;;
+                esac
+                ;;
+        esac
+    done < "$INSTALL_CONFIG_FILE"
 }
 
 # Creates a temporary directory and registers cleanup handler
@@ -49,7 +82,7 @@ get_directories() {
     if is_dev_mode; then
         echo "$DEV_DIR" "$SCRIPTS_DIR_DEV"
     else
-        echo "$INSTALL_DIR" "$SCRIPTS_DIR_PROD"
+        echo "$INSTALL_DIR" "$INSTALL_DIR/scripts"
     fi
 }
 
@@ -57,11 +90,149 @@ get_directories() {
 # Currently supports macOS and Linux systems
 # Returns: Path string for binary installation
 get_bin_path() {
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        echo "/usr/local/bin"
-    else
-        echo "/usr/local/bin"
+    echo "$BIN_DIR"
+}
+
+persist_install_config() {
+    mkdir -p "$CONFIG_DIR"
+    if [ "$INSTALL_DIR" = "$DEFAULT_INSTALL_DIR" ] && [ "$BIN_DIR" = "$DEFAULT_BIN_DIR" ]; then
+        rm -f "$INSTALL_CONFIG_FILE"
+        return 0
     fi
+
+    {
+        printf 'INSTALL_DIR=%s\n' "$INSTALL_DIR"
+        printf 'BIN_DIR=%s\n' "$BIN_DIR"
+    } > "$INSTALL_CONFIG_FILE"
+    chmod 600 "$INSTALL_CONFIG_FILE" 2>/dev/null || true
+}
+
+is_path_writable() {
+    local path="$1"
+    local parent
+
+    if [ -e "$path" ]; then
+        [ -w "$path" ]
+        return $?
+    fi
+
+    parent=$(dirname "$path")
+    while [ ! -d "$parent" ] && [ "$parent" != "/" ]; do
+        parent=$(dirname "$parent")
+    done
+
+    [ -w "$parent" ]
+}
+
+configure_privilege_mode() {
+    local install_dir scripts_dir bin_path
+
+    read -r install_dir scripts_dir <<<"$(get_directories)"
+    bin_path=$(get_bin_path)
+    USE_SUDO=0
+
+    [ "$(id -u)" -eq 0 ] && return 0
+    is_dev_mode && return 0
+
+    if ! is_path_writable "$install_dir" || ! is_path_writable "$scripts_dir" || ! is_path_writable "$bin_path"; then
+        USE_SUDO=1
+    fi
+}
+
+run_install_command() {
+    if [ "$USE_SUDO" -eq 1 ] && [ "$(id -u)" -ne 0 ]; then
+        sudo "$@"
+    else
+        "$@"
+    fi
+}
+
+ensure_path_note() {
+    local bin_path
+    bin_path=$(get_bin_path)
+    case ":$PATH:" in
+        *":$bin_path:"*)
+            ;;
+        *)
+            echo
+            echo "${YELLOW}Note:${NC} $bin_path is not currently in PATH."
+            echo "Add it to your shell profile if you want to run 'llama' directly."
+            ;;
+    esac
+}
+
+prompt_for_user_install_location() {
+    local default_install_dir="$HOME/.local/lib/llama"
+    local default_bin_dir="$HOME/.local/bin"
+    local input_install_dir input_bin_dir
+
+    if ! [ -r /dev/tty ] || ! [ -w /dev/tty ]; then
+        return 1
+    fi
+
+    echo
+    echo "${YELLOW}You can install llama without sudo in your home directory instead.${NC}"
+    echo "The command symlink will be placed in the bin directory you choose."
+    echo "That directory must be in PATH."
+
+    printf "Install directory [%s]: " "$default_install_dir" > /dev/tty
+    read -r input_install_dir < /dev/tty || return 1
+    printf "Bin directory for the 'llama' command [%s]: " "$default_bin_dir" > /dev/tty
+    read -r input_bin_dir < /dev/tty || return 1
+
+    INSTALL_DIR="${input_install_dir:-$default_install_dir}"
+    BIN_DIR="${input_bin_dir:-$default_bin_dir}"
+    USE_SUDO=0
+    persist_install_config
+
+    echo
+    echo "${GREEN}Using user install paths:${NC}"
+    echo "  Install: $INSTALL_DIR"
+    echo "  Bin:     $BIN_DIR"
+    ensure_path_note
+    return 0
+}
+
+prompt_for_sudo() {
+    local reason="$1"
+    shift
+    local step
+
+    if [ "$(id -u)" -eq 0 ] || [ "$SUDO_READY" -eq 1 ] || [ "$USE_SUDO" -eq 0 ]; then
+        return 0
+    fi
+
+    echo
+    echo "${YELLOW}This action needs administrator access.${NC}"
+    echo "$reason"
+    if [ $# -gt 0 ]; then
+        echo "It will run commands like:"
+        for step in "$@"; do
+            echo "  - $step"
+        done
+    fi
+
+    if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+        printf "Continue and allow sudo? [y/N] " > /dev/tty
+        read -r reply < /dev/tty || return 1
+        case "$reply" in
+            y|Y|yes|YES)
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    else
+        echo "Requesting sudo access now..."
+    fi
+
+    if ! sudo -v; then
+        echo "${RED}Error:${NC} Could not obtain sudo access."
+        return 1
+    fi
+
+    SUDO_READY=1
+    return 0
 }
 
 # Display help information with environment indication and script descriptions
@@ -135,8 +306,9 @@ create_symlink() {
     bin_path=$(get_bin_path)
     read -r install_dir _ <<<"$(get_directories)"
     if ! is_dev_mode; then
-        sudo ln -sf "$install_dir/llama" "$bin_path/llama"
-        echo "Created production symbolic link in $bin_path"
+        run_install_command mkdir -p "$bin_path"
+        run_install_command ln -sf "$install_dir/llama" "$bin_path/llama"
+        echo "Created symbolic link in $bin_path"
     fi
 }
 
@@ -145,21 +317,23 @@ install_from_dev() {
     echo "Installing from development directory..."
     read -r install_dir scripts_dir <<<"$(get_directories)"
 
-    sudo mkdir -p "$install_dir"
-    sudo mkdir -p "$scripts_dir"
+    run_install_command mkdir -p "$install_dir"
+    run_install_command mkdir -p "$scripts_dir"
 
     # Copy main script
     local script_path
     script_path="$(cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")"
     if [ "$script_path" != "$install_dir/llama" ]; then
-        sudo cp "$0" "$install_dir/llama"
-        sudo chmod +x "$install_dir/llama"
+        run_install_command cp "$0" "$install_dir/llama"
+        run_install_command chmod +x "$install_dir/llama"
     fi
 
     # Copy scripts
     if [ -d "$DEV_DIR/scripts" ]; then
-        sudo cp -r "$DEV_DIR/scripts/"* "$scripts_dir/"
-        find "$scripts_dir" -type f -exec sudo chmod +x {} \;
+        run_install_command cp -r "$DEV_DIR/scripts/"* "$scripts_dir/"
+        while IFS= read -r script_file; do
+            run_install_command chmod +x "$script_file"
+        done < <(find "$scripts_dir" -type f)
     fi
 }
 
@@ -168,8 +342,8 @@ install_from_github() {
     echo "Installing from GitHub..."
     read -r install_dir scripts_dir <<<"$(get_directories)"
 
-    sudo mkdir -p "$install_dir"
-    sudo mkdir -p "$scripts_dir"
+    run_install_command mkdir -p "$install_dir"
+    run_install_command mkdir -p "$scripts_dir"
 
     # Clone the repository
     if ! git clone --depth 1 --branch "$GITHUB_BRANCH" --single-branch \
@@ -184,8 +358,8 @@ install_from_github() {
             return 1
         fi
         # Update main script
-        sudo cp "$TEMP_DIR/repo/llama" "$install_dir/llama"
-        sudo chmod +x "$install_dir/llama"
+        run_install_command cp "$TEMP_DIR/repo/llama" "$install_dir/llama"
+        run_install_command chmod +x "$install_dir/llama"
 
         # Only update existing scripts
         if [ -d "$TEMP_DIR/repo/scripts" ] && [ -d "$scripts_dir" ]; then
@@ -195,8 +369,8 @@ install_from_github() {
                     script_name=$(basename "$existing_script")
                     if [ -f "$TEMP_DIR/repo/scripts/$script_name" ]; then
                         echo "Updating script: $script_name"
-                        sudo cp "$TEMP_DIR/repo/scripts/$script_name" "$scripts_dir/$script_name"
-                        sudo chmod +x "$scripts_dir/$script_name"
+                        run_install_command cp "$TEMP_DIR/repo/scripts/$script_name" "$scripts_dir/$script_name"
+                        run_install_command chmod +x "$scripts_dir/$script_name"
                     fi
                 fi
             done
@@ -209,8 +383,38 @@ install_from_github() {
 
 # Main install function
 install_script() {
+    local install_dir scripts_dir bin_path env_type
+    local -a sudo_steps
+
     echo "Installing llama..."
     setup_temp_dir
+
+    configure_privilege_mode
+    read -r install_dir scripts_dir <<<"$(get_directories)"
+    bin_path=$(get_bin_path)
+    env_type=$(is_dev_mode && echo "development" || echo "production")
+    sudo_steps=(
+        "mkdir -p $install_dir"
+        "mkdir -p $scripts_dir"
+        "copy llama and installed scripts into $install_dir"
+        "update executable permissions on installed files"
+    )
+    if ! is_dev_mode; then
+        sudo_steps+=("mkdir -p $bin_path")
+        sudo_steps+=("ln -sf $install_dir/llama $bin_path/llama")
+    fi
+
+    if ! prompt_for_sudo \
+        "Installing in $env_type mode writes LSM files outside your home directory." \
+        "${sudo_steps[@]}"; then
+        if ! is_dev_mode && prompt_for_user_install_location; then
+            read -r install_dir scripts_dir <<<"$(get_directories)"
+            bin_path=$(get_bin_path)
+        else
+            echo "Installation cancelled before privileged changes."
+            return 0
+        fi
+    fi
 
     if is_dev_mode; then
         install_from_dev
@@ -219,6 +423,8 @@ install_script() {
     fi
 
     create_symlink
+    persist_install_config
+    ensure_path_note
     echo "Installation completed in $(is_dev_mode && echo "DEVELOPMENT" || echo "PRODUCTION") mode"
 }
 
@@ -226,21 +432,33 @@ install_script() {
 remove_script() {
     read -r install_dir scripts_dir <<<"$(get_directories)"
     local bin_path=$(get_bin_path)
+    configure_privilege_mode
+
+    if ! prompt_for_sudo \
+        "Removing LSM deletes files from system installation paths." \
+        "rm $bin_path/llama" \
+        "rm -rf $scripts_dir" \
+        "rm -rf $install_dir"; then
+        echo "Removal cancelled before privileged changes."
+        return 0
+    fi
 
     if ! is_dev_mode && [ -L "$bin_path/llama" ]; then
-        sudo rm "$bin_path/llama"
-        echo "Removed production symbolic link from $bin_path"
+        run_install_command rm "$bin_path/llama"
+        echo "Removed symbolic link from $bin_path"
     fi
 
     if [ -d "$scripts_dir" ]; then
-        sudo rm -rf "$scripts_dir"
+        run_install_command rm -rf "$scripts_dir"
         echo "Removed scripts directory $scripts_dir"
     fi
 
     if [ -d "$install_dir" ]; then
-        sudo rm -rf "$install_dir"
+        run_install_command rm -rf "$install_dir"
         echo "Removed installation directory $install_dir"
     fi
+
+    [ -f "$INSTALL_CONFIG_FILE" ] && rm -f "$INSTALL_CONFIG_FILE"
 
     echo "Llama removed successfully from $(is_dev_mode && echo "DEVELOPMENT" || echo "PRODUCTION") environment"
 }
@@ -421,10 +639,25 @@ update_from_release() {
 
     # Install verified files
     read -r install_dir scripts_dir <<<"$(get_directories)"
-    sudo mkdir -p "$install_dir" "$scripts_dir"
+    local bin_path
+    bin_path=$(get_bin_path)
+    configure_privilege_mode
+
+    if ! prompt_for_sudo \
+        "Applying the update writes verified release files into protected install directories." \
+        "mkdir -p $install_dir $scripts_dir" \
+        "mkdir -p $bin_path" \
+        "install $TEMP_DIR/repo/llama into $install_dir" \
+        "install updated scripts into $scripts_dir" \
+        "ln -sf $install_dir/llama $bin_path/llama"; then
+        echo "Update cancelled before privileged changes."
+        return 0
+    fi
+
+    run_install_command mkdir -p "$install_dir" "$scripts_dir"
 
     # Update main script
-    sudo install -m 755 "$TEMP_DIR/repo/llama" "$install_dir/llama"
+    run_install_command install -m 755 "$TEMP_DIR/repo/llama" "$install_dir/llama"
     echo "Updated llama → $remote_version"
 
     # Update existing scripts
@@ -434,13 +667,14 @@ update_from_release() {
             local script_name
             script_name=$(basename "$existing_script")
             if [ -f "$TEMP_DIR/repo/scripts/$script_name" ]; then
-                sudo install -m 755 "$TEMP_DIR/repo/scripts/$script_name" "$scripts_dir/$script_name"
+                run_install_command install -m 755 "$TEMP_DIR/repo/scripts/$script_name" "$scripts_dir/$script_name"
                 echo "Updated script: $script_name"
             fi
         done
     fi
 
     create_symlink
+    persist_install_config
     echo "${GREEN}Update completed successfully.${NC}"
     echo "Restart llama to use the new version."
     exit 0
@@ -483,9 +717,24 @@ update_from_branch() {
     fi
 
     read -r install_dir scripts_dir <<<"$(get_directories)"
-    sudo mkdir -p "$install_dir" "$scripts_dir"
+    local bin_path
+    bin_path=$(get_bin_path)
+    configure_privilege_mode
 
-    sudo install -m 755 "$TEMP_DIR/repo/llama" "$install_dir/llama"
+    if ! prompt_for_sudo \
+        "Applying the update writes downloaded files into protected install directories." \
+        "mkdir -p $install_dir $scripts_dir" \
+        "mkdir -p $bin_path" \
+        "install $TEMP_DIR/repo/llama into $install_dir" \
+        "install updated scripts into $scripts_dir" \
+        "ln -sf $install_dir/llama $bin_path/llama"; then
+        echo "Update cancelled before privileged changes."
+        return 0
+    fi
+
+    run_install_command mkdir -p "$install_dir" "$scripts_dir"
+
+    run_install_command install -m 755 "$TEMP_DIR/repo/llama" "$install_dir/llama"
     echo "Updated llama → $remote_version"
 
     if [ -d "$TEMP_DIR/repo/scripts" ] && [ -d "$scripts_dir" ]; then
@@ -494,13 +743,14 @@ update_from_branch() {
             local script_name
             script_name=$(basename "$existing_script")
             if [ -f "$TEMP_DIR/repo/scripts/$script_name" ]; then
-                sudo install -m 755 "$TEMP_DIR/repo/scripts/$script_name" "$scripts_dir/$script_name"
+                run_install_command install -m 755 "$TEMP_DIR/repo/scripts/$script_name" "$scripts_dir/$script_name"
                 echo "Updated script: $script_name"
             fi
         done
     fi
 
     create_symlink
+    persist_install_config
     echo "${GREEN}Update completed successfully.${NC}"
     echo "Restart llama to use the new version."
     exit 0
@@ -584,6 +834,7 @@ list_scripts() {
 # Install a specific script by name
 install_single_script() {
     local script_name="$1"
+    configure_privilege_mode
 
     if [ -z "$script_name" ]; then
         echo "Usage: llama scripts add <script-name>"
@@ -613,14 +864,23 @@ install_single_script() {
         return 1
     fi
 
-    sudo mkdir -p "$scripts_dir"
-    sudo install -m 755 "$TEMP_DIR/repo/scripts/$script_name" "$scripts_dir/$script_name"
+    if ! prompt_for_sudo \
+        "Installing a script writes files into the shared LSM scripts directory." \
+        "mkdir -p $scripts_dir" \
+        "install $script_name into $scripts_dir"; then
+        echo "Script installation cancelled before privileged changes."
+        return 0
+    fi
+
+    run_install_command mkdir -p "$scripts_dir"
+    run_install_command install -m 755 "$TEMP_DIR/repo/scripts/$script_name" "$scripts_dir/$script_name"
     echo "${GREEN}Installed:${NC} $script_name"
 }
 
 # Remove a specific script by name
 remove_single_script() {
     local script_name="$1"
+    configure_privilege_mode
 
     if [ -z "$script_name" ]; then
         echo "Usage: llama scripts remove <script-name>"
@@ -635,7 +895,14 @@ remove_single_script() {
         return 1
     fi
 
-    sudo rm "$scripts_dir/$script_name"
+    if ! prompt_for_sudo \
+        "Removing a script deletes files from the shared LSM scripts directory." \
+        "rm $scripts_dir/$script_name"; then
+        echo "Script removal cancelled before privileged changes."
+        return 0
+    fi
+
+    run_install_command rm "$scripts_dir/$script_name"
     echo "${GREEN}Removed:${NC} $script_name"
 }
 
@@ -648,6 +915,8 @@ update_script() {
         update_from_release
     fi
 }
+
+load_install_config
 
 # Main command router
 # Processes command-line arguments and executes appropriate functions

@@ -21,6 +21,10 @@ Uses the one-line installer above. Installs to `/usr/local/lib/llama`, creates a
 
 Updates are fetched from GitHub Releases with SHA256 checksum verification.
 
+If you do not want to grant `sudo`, the installer can fall back to a user install in a custom location such as `~/.local/lib/llama` with a bin directory like `~/.local/bin`. In that case you must ensure the chosen bin directory is in your `PATH`.
+
+If `dialog` is not installed, the installer can continue with a numbered text-based script selection flow instead of installing extra packages automatically.
+
 ### Development
 
 ```bash
@@ -122,7 +126,11 @@ Scans Git repositories under a folder and can mirror a clean local repo to an al
 llama git status ~/Dev
 llama git sync setup ~/Dev
 llama git sync setup ~/Dev/testm git@gitlab.com:me/testm.git
+llama git sync show
+llama git sync show ~/Dev
+llama git sync --dry-run --all ~/Dev
 llama git sync --all ~/Dev
+llama git sync --dry-run ~/Dev/testm
 llama git sync ~/Dev/testm
 ```
 
@@ -137,6 +145,7 @@ Rules:
 - single-repo sync requires an explicit repo path
 - sync only runs for clean repositories
 - source data comes from the repo's primary remote (`origin` if present)
+- `--dry-run` previews the mirror operation without pushing
 
 ### test
 
@@ -152,7 +161,7 @@ llama test list         # Directory listing
 - Bash 4.0+
 - `curl`
 - `git`
-- `sudo` access for installation
+- `sudo` access only for system-wide installation or temporary package installation
 - Docker (for docker-update script only)
 
 ## Author

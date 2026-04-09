@@ -3,10 +3,10 @@
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
 # Github: github.com/brunoafk
-# Version: 1.2
+# Version: 1.3
 # Description: Scan Git repositories under a directory, show clean/dirty status, and sync mirrored remotes.
 
-VERSION="1.2"
+VERSION="1.3"
 
 clean=0
 dirty=0
@@ -32,8 +32,9 @@ show_help() {
     printf "%-28s %s\n" "status [location]" "Scan all Git repos under location (default: current directory)"
     printf "%-28s %s\n" "sync setup [location]" "Scan repos and configure sync target URLs interactively"
     printf "%-28s %s\n" "sync setup <repo> <url>" "Set or update sync target for one repo"
+    printf "%-28s %s\n" "sync show [location]" "Show configured sync targets, optionally filtered by folder"
     printf "%-28s %s\n" "sync --all [location]" "Sync all configured clean repos under location"
-    printf "%-28s %s\n" "sync <repo-path>" "Sync one configured repo by explicit path"
+    printf "%-28s %s\n" "sync [--dry-run] <repo-path>" "Sync one configured repo by explicit path"
     printf "%-28s %s\n" "help, -h, --help" "Show this help message"
     echo
     echo "${c_yellow}Examples:${c_reset}"
@@ -41,7 +42,11 @@ show_help() {
     echo "  llama git status ~/Dev"
     echo "  llama git sync setup ~/Dev"
     echo "  llama git sync setup ~/Dev/testm git@gitlab.com:me/testm.git"
+    echo "  llama git sync show"
+    echo "  llama git sync show ~/Dev"
+    echo "  llama git sync --dry-run --all ~/Dev"
     echo "  llama git sync --all ~/Dev"
+    echo "  llama git sync --dry-run ~/Dev/testm"
     echo "  llama git sync ~/Dev/testm"
     echo
     echo "${c_yellow}Sync Config:${c_reset}"
@@ -52,6 +57,7 @@ show_help() {
     echo "  - Sync runs only for clean repos."
     echo "  - 'sync --all' scans the current folder by default, just like status."
     echo "  - Single-repo sync requires an explicit repo path."
+    echo "  - '--dry-run' fetches and previews the mirror operation without pushing."
     echo
     echo "${c_yellow}Output Format:${c_reset}"
     echo "  ${c_green}CLEAN${c_reset}  No uncommitted changes"
@@ -123,6 +129,11 @@ discover_repositories() {
     done | awk 'NF && !seen[$0]++' | sort
 }
 
+normalize_directory() {
+    local location="$1"
+    cd "$location" >/dev/null 2>&1 && pwd -P
+}
+
 lookup_sync_target() {
     local repo="$1"
     local line
@@ -137,6 +148,18 @@ lookup_sync_target() {
     done < "$SYNC_CONFIG_FILE"
 
     return 1
+}
+
+count_remote_branches() {
+    local repo="$1"
+    local source_remote="$2"
+
+    git -C "$repo" for-each-ref --format='%(refname:lstrip=3)' "refs/remotes/$source_remote" | sed '/^HEAD$/d' | awk 'NF {count++} END {print count+0}'
+}
+
+count_local_tags() {
+    local repo="$1"
+    git -C "$repo" tag | awk 'NF {count++} END {print count+0}'
 }
 
 save_sync_target() {
@@ -395,9 +418,65 @@ sync_setup() {
     done
 }
 
+sync_show() {
+    local location="$1"
+    local filter_root=""
+    local line found=0 source_remote source_url
+
+    ensure_sync_config
+
+    if [ -n "$location" ]; then
+        ensure_directory_exists "$location"
+        filter_root=$(normalize_directory "$location")
+    fi
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        if ! parse_sync_config_line "$line"; then
+            continue
+        fi
+
+        if [ -n "$filter_root" ]; then
+            case "$PARSED_SYNC_PATH" in
+                "$filter_root"|"$filter_root"/*)
+                    ;;
+                *)
+                    continue
+                    ;;
+            esac
+        fi
+
+        found=1
+        echo "${c_blue}$PARSED_SYNC_PATH${c_reset}"
+        if [ -d "$PARSED_SYNC_PATH" ] && git -C "$PARSED_SYNC_PATH" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            source_remote=$(get_source_remote "$PARSED_SYNC_PATH" 2>/dev/null || true)
+            source_url=""
+            [ -n "$source_remote" ] && source_url=$(git -C "$PARSED_SYNC_PATH" remote get-url "$source_remote" 2>/dev/null || true)
+            if [ -n "$source_remote" ]; then
+                echo "  Source: $source_remote ${c_gray}($source_url)${c_reset}"
+            else
+                echo "  Source: ${c_yellow}<no remote found>${c_reset}"
+            fi
+        else
+            echo "  Source: ${c_yellow}<repo path not found locally>${c_reset}"
+        fi
+        echo "  Target: ${c_green}$PARSED_SYNC_URL${c_reset}"
+        echo
+    done < "$SYNC_CONFIG_FILE"
+
+    if [ "$found" -eq 0 ]; then
+        if [ -n "$filter_root" ]; then
+            echo "${c_yellow}No sync targets configured under:${c_reset} $filter_root"
+        else
+            echo "${c_yellow}No sync targets configured.${c_reset}"
+            echo "Run: llama git sync setup <location>"
+        fi
+    fi
+}
+
 sync_one_repo() {
     local requested_path="$1"
-    local repo target_url source_remote source_url branch_count
+    local dry_run="${2:-0}"
+    local repo target_url source_remote source_url branch_count tag_count
 
     repo=$(get_repo_root "$requested_path") || {
         echo "${c_red}Error:${c_reset} '$requested_path' is not a Git repository."
@@ -451,6 +530,17 @@ sync_one_repo() {
         return 12
     fi
 
+    tag_count=$(count_local_tags "$repo")
+
+    if [ "$dry_run" -eq 1 ]; then
+        cleanup_sync_refs "$repo"
+        echo "${c_blue}Dry run:${c_reset} no push was performed."
+        echo "  Would mirror ${c_green}$branch_count${c_reset} branches and ${c_green}$tag_count${c_reset} tags to $target_url"
+        echo "  Would run: git push --prune \"$target_url\" \"+$SYNC_REF_NAMESPACE/*:refs/heads/*\""
+        echo "  Would run: git push --prune \"$target_url\" \"+refs/tags/*:refs/tags/*\""
+        return 0
+    fi
+
     if ! git -C "$repo" push --prune "$target_url" "+$SYNC_REF_NAMESPACE/*:refs/heads/*"; then
         echo "${c_red}Error:${c_reset} Failed to push branches to sync target"
         cleanup_sync_refs "$repo"
@@ -464,13 +554,14 @@ sync_one_repo() {
     fi
 
     cleanup_sync_refs "$repo"
-    echo "${c_green}Sync completed.${c_reset} Branches mirrored: $branch_count"
+    echo "${c_green}Sync completed.${c_reset} Branches mirrored: $branch_count  Tags mirrored: $tag_count"
     return 0
 }
 
 sync_all_repositories() {
     local location="${1:-.}"
-    local repo result
+    local dry_run="${2:-0}"
+    local repo result sync_label
     local total=0 configured=0 synced=0 dirty_skipped=0 failed=0
 
     ensure_git_available
@@ -487,6 +578,8 @@ sync_all_repositories() {
     fi
 
     echo "${c_blue}Sync scan:${c_reset} $location"
+    sync_label="synced"
+    [ "$dry_run" -eq 1 ] && sync_label="would-sync"
 
     for repo in "${repos[@]}"; do
         total=$((total + 1))
@@ -496,7 +589,7 @@ sync_all_repositories() {
 
         configured=$((configured + 1))
         echo
-        sync_one_repo "$repo"
+        sync_one_repo "$repo" "$dry_run"
         result=$?
 
         case "$result" in
@@ -513,31 +606,64 @@ sync_all_repositories() {
     done
 
     echo
-    printf "%sSYNC SUMMARY%s  scanned=%d  configured=%d  %ssynced=%d%s  %sdirty-skipped=%d%s  %sfailed=%d%s\n" \
+    printf "%sSYNC SUMMARY%s  scanned=%d  configured=%d  %s%s=%d%s  %sdirty-skipped=%d%s  %sfailed=%d%s\n" \
         "$c_blue" "$c_reset" \
         "$total" "$configured" \
-        "$c_green" "$synced" "$c_reset" \
+        "$c_green" "$sync_label" "$synced" "$c_reset" \
         "$c_yellow" "$dirty_skipped" "$c_reset" \
         "$c_red" "$failed" "$c_reset"
 }
 
 handle_sync_command() {
-    case "$1" in
+    local dry_run=0
+    local mode=""
+    local -a positional=()
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            "--dry-run")
+                dry_run=1
+                ;;
+            "--all")
+                mode="all"
+                ;;
+            "setup"|"show"|"help"|"-h"|"--help")
+                if [ -z "$mode" ]; then
+                    mode="$1"
+                else
+                    positional+=("$1")
+                fi
+                ;;
+            *)
+                positional+=("$1")
+                ;;
+        esac
+        shift
+    done
+
+    case "$mode" in
         "setup")
-            if [ -n "$2" ] && [ -n "$3" ]; then
-                sync_setup "$2" "$3"
+            if [ -n "${positional[1]}" ]; then
+                sync_setup "${positional[0]}" "${positional[1]}"
             else
-                sync_setup "$2"
+                sync_setup "${positional[0]}"
             fi
             ;;
-        "--all")
-            sync_all_repositories "$2"
+        "show")
+            sync_show "${positional[0]}"
             ;;
-        ""|"help"|"-h"|"--help")
-            show_help
+        "all")
+            sync_all_repositories "${positional[0]}" "$dry_run"
+            ;;
+        "help"|"-h"|"--help"|"")
+            if [ ${#positional[@]} -eq 0 ]; then
+                show_help
+            else
+                sync_one_repo "${positional[0]}" "$dry_run"
+            fi
             ;;
         *)
-            sync_one_repo "$1"
+            sync_one_repo "${positional[0]}" "$dry_run"
             ;;
     esac
 }

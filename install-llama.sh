@@ -20,7 +20,7 @@ BLUE=$'\033[0;34m'
 NC=$'\033[0m' # No Color
 
 # Version
-VERSION="1.1.2"
+VERSION="1.1.3"
 
 # Global array for selected scripts
 declare -A SELECTED_SCRIPTS
@@ -30,6 +30,9 @@ DEBUG=false # Set to true to enable debug output
 
 # Track whether dialog was installed by this script
 DIALOG_INSTALLED_BY_LSM=false
+INSTALL_SUDO_READY=false
+DIALOG_SUDO_READY=false
+USE_SUDO=true
 
 #------------------------------------------------------------------------------
 # Core Error Handling Functions
@@ -90,8 +93,12 @@ trap 'handle_error $? $LINENO' ERR
 GITHUB_USER="BrunoAFK"
 GITHUB_REPO="LSM"
 GITHUB_BRANCH="main"
-INSTALL_DIR="/usr/local/lib/llama"
-BIN_DIR="/usr/local/bin"
+DEFAULT_INSTALL_DIR="/usr/local/lib/llama"
+DEFAULT_BIN_DIR="/usr/local/bin"
+CONFIG_DIR="$HOME/.config/llama_env"
+INSTALL_CONFIG_FILE="$CONFIG_DIR/install.conf"
+INSTALL_DIR="$DEFAULT_INSTALL_DIR"
+BIN_DIR="$DEFAULT_BIN_DIR"
 REPO_URL="https://github.com/$GITHUB_USER/$GITHUB_REPO.git"
 GITHUB_API_BASE="https://api.github.com/repos/$GITHUB_USER/$GITHUB_REPO"
 
@@ -116,6 +123,350 @@ print_section_header() {
         echo "${BLUE}=== $title (v${VERSION}) ===${NC}"
         debug_log "Starting section: $title"
     fi
+}
+
+prompt_for_sudo_access() {
+    local cache_var="$1"
+    local reason="$2"
+    shift 2
+    local step reply cache_value
+
+    eval "cache_value=\${$cache_var:-false}"
+    if [ "$(id -u)" -eq 0 ] || [ "$cache_value" = true ]; then
+        return 0
+    fi
+
+    echo
+    echo "${YELLOW}${reason}${NC}"
+    if [ $# -gt 0 ]; then
+        echo "It will run commands like:"
+        for step in "$@"; do
+            echo "  - $step"
+        done
+    fi
+
+    if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+        printf "Continue and allow sudo? [y/N] " > /dev/tty
+        read -r reply < /dev/tty || return 1
+        case "$reply" in
+            y|Y|yes|YES)
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    else
+        echo "Requesting sudo access now..."
+    fi
+
+    if ! sudo -v; then
+        echo "${RED}Error: Could not obtain sudo access${NC}"
+        return 1
+    fi
+
+    eval "$cache_var=true"
+    return 0
+}
+
+persist_install_config() {
+    mkdir -p "$CONFIG_DIR"
+    if [ "$INSTALL_DIR" = "$DEFAULT_INSTALL_DIR" ] && [ "$BIN_DIR" = "$DEFAULT_BIN_DIR" ]; then
+        rm -f "$INSTALL_CONFIG_FILE"
+        return 0
+    fi
+
+    {
+        printf 'INSTALL_DIR=%s\n' "$INSTALL_DIR"
+        printf 'BIN_DIR=%s\n' "$BIN_DIR"
+    } > "$INSTALL_CONFIG_FILE"
+    chmod 600 "$INSTALL_CONFIG_FILE" 2>/dev/null || true
+}
+
+is_path_writable() {
+    local path="$1"
+    local parent
+
+    if [ -e "$path" ]; then
+        [ -w "$path" ]
+        return $?
+    fi
+
+    parent=$(dirname "$path")
+    while [ ! -d "$parent" ] && [ "$parent" != "/" ]; do
+        parent=$(dirname "$parent")
+    done
+
+    [ -w "$parent" ]
+}
+
+run_install_command() {
+    if [ "$USE_SUDO" = true ] && [ "$(id -u)" -ne 0 ]; then
+        sudo "$@"
+    else
+        "$@"
+    fi
+}
+
+ensure_path_note() {
+    case ":$PATH:" in
+        *":$BIN_DIR:"*)
+            ;;
+        *)
+            echo
+            echo "${YELLOW}Note:${NC} $BIN_DIR is not currently in PATH."
+            echo "Add it to your shell profile if you want to run 'llama' directly."
+            ;;
+    esac
+}
+
+prompt_for_user_install_location() {
+    local input_install_dir input_bin_dir
+    local default_install_dir="$HOME/.local/lib/llama"
+    local default_bin_dir="$HOME/.local/bin"
+
+    if ! [ -r /dev/tty ] || ! [ -w /dev/tty ]; then
+        return 1
+    fi
+
+    echo
+    echo "${YELLOW}You can continue without sudo by installing in your home directory.${NC}"
+    echo "Choose where llama should be stored and where the 'llama' command symlink should be created."
+    echo "The bin directory must be in PATH."
+
+    printf "Install directory [%s]: " "$default_install_dir" > /dev/tty
+    read -r input_install_dir < /dev/tty || return 1
+    printf "Bin directory for the 'llama' command [%s]: " "$default_bin_dir" > /dev/tty
+    read -r input_bin_dir < /dev/tty || return 1
+
+    INSTALL_DIR="${input_install_dir:-$default_install_dir}"
+    BIN_DIR="${input_bin_dir:-$default_bin_dir}"
+    USE_SUDO=false
+    persist_install_config
+
+    echo
+    echo "${GREEN}Using user install paths:${NC}"
+    echo "  Install: $INSTALL_DIR"
+    echo "  Bin:     $BIN_DIR"
+    ensure_path_note
+    return 0
+}
+
+configure_install_target() {
+    if [ "$(id -u)" -eq 0 ]; then
+        USE_SUDO=false
+        persist_install_config
+        return 0
+    fi
+
+    if is_path_writable "$INSTALL_DIR" && is_path_writable "$INSTALL_DIR/scripts" && is_path_writable "$BIN_DIR"; then
+        USE_SUDO=false
+        persist_install_config
+        return 0
+    fi
+
+    if prompt_for_sudo_access INSTALL_SUDO_READY \
+        "Installing LSM system-wide requires administrator access." \
+        "mkdir -p $INSTALL_DIR" \
+        "mkdir -p $INSTALL_DIR/scripts" \
+        "copy llama into $INSTALL_DIR" \
+        "copy selected scripts into $INSTALL_DIR/scripts" \
+        "mkdir -p $BIN_DIR" \
+        "ln -sf $INSTALL_DIR/llama $BIN_DIR/llama"; then
+        USE_SUDO=true
+        persist_install_config
+        return 0
+    fi
+
+    prompt_for_user_install_location
+}
+
+select_scripts_text() {
+    local scripts_dir="$1"
+    local script selection raw_index script_name description index selected_index
+    local -a script_names=()
+    SELECTED_SCRIPTS=()
+
+    echo
+    echo "${YELLOW}Continuing without dialog.${NC}"
+    echo "Available scripts:"
+
+    index=1
+    while IFS= read -r -d '' script; do
+        script_name=$(basename "$script")
+        description=$(head -n 20 "$script" | grep -i "^#.*description:" | head -n 1 | sed 's/^#[ ]*[Dd]escription:[ ]*//')
+        description="${description:-No description}"
+        script_names+=("$script_name")
+        printf "  [%d] %-16s %s\n" "$index" "$script_name" "$description"
+        index=$((index + 1))
+    done < <(find "$scripts_dir" -type f -print0)
+
+    echo
+    echo "Enter comma-separated numbers to install, 'all' for everything, or press ENTER for core install only."
+    if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+        printf "Selection: " > /dev/tty
+        IFS= read -r selection < /dev/tty || return 1
+    else
+        return 1
+    fi
+
+    case "$selection" in
+        "" )
+            echo "${BLUE}No optional scripts selected. Only llama will be installed.${NC}"
+            return 0
+            ;;
+        all|ALL|All)
+            while IFS= read -r -d '' script; do
+                script_name=$(basename "$script")
+                SELECTED_SCRIPTS["$script_name"]=1
+            done < <(find "$scripts_dir" -type f -print0)
+            echo "${GREEN}Selected all scripts.${NC}"
+            return 0
+            ;;
+    esac
+
+    IFS=',' read -r -a raw_indices <<< "$selection"
+    for raw_index in "${raw_indices[@]}"; do
+        selected_index=$(printf '%s' "$raw_index" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+        [ -z "$selected_index" ] && continue
+        if [[ "$selected_index" =~ ^[0-9]+$ ]] && [ "$selected_index" -ge 1 ] && [ "$selected_index" -le "${#script_names[@]}" ]; then
+            script_name="${script_names[$((selected_index - 1))]}"
+            SELECTED_SCRIPTS["$script_name"]=1
+        else
+            echo "${YELLOW}Skipping unknown selection:${NC} $selected_index"
+        fi
+    done
+
+    if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
+        echo "${BLUE}No valid optional scripts selected. Only llama will be installed.${NC}"
+    fi
+
+    return 0
+}
+
+install_dialog_package() {
+    local reply
+
+    echo
+    echo "${YELLOW}The 'dialog' package is not installed.${NC}"
+    echo "It is only needed for the interactive checkbox UI."
+    echo "If you do not want that, the installer will continue with a plain text selection prompt."
+
+    if command -v apt-get >/dev/null 2>&1; then
+        echo "Package manager commands:"
+        echo "  - apt-get update"
+        echo "  - apt-get install -y dialog"
+        if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+            printf "Install dialog temporarily? [y/N] " > /dev/tty
+            read -r reply < /dev/tty || return 1
+        else
+            return 1
+        fi
+        case "$reply" in
+            y|Y|yes|YES)
+                if ! prompt_for_sudo_access DIALOG_SUDO_READY \
+                    "Installing dialog temporarily requires administrator access." \
+                    "apt-get update" \
+                    "apt-get install -y dialog"; then
+                    return 1
+                fi
+                if ! sudo apt-get update 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
+                    debug_log "Failed to update apt"
+                    exit 1
+                fi
+                if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y dialog 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
+                    debug_log "Failed to install dialog"
+                    exit 1
+                fi
+                DIALOG_INSTALLED_BY_LSM=true
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    elif command -v yum >/dev/null 2>&1; then
+        echo "Package manager command:"
+        echo "  - yum install -y dialog"
+        if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+            printf "Install dialog temporarily? [y/N] " > /dev/tty
+            read -r reply < /dev/tty || return 1
+        else
+            return 1
+        fi
+        case "$reply" in
+            y|Y|yes|YES)
+                if ! prompt_for_sudo_access DIALOG_SUDO_READY \
+                    "Installing dialog temporarily requires administrator access." \
+                    "yum install -y dialog"; then
+                    return 1
+                fi
+                if ! sudo yum install -y dialog 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
+                    debug_log "Failed to install dialog"
+                    exit 1
+                fi
+                DIALOG_INSTALLED_BY_LSM=true
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    elif command -v dnf >/dev/null 2>&1; then
+        echo "Package manager command:"
+        echo "  - dnf install -y dialog"
+        if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+            printf "Install dialog temporarily? [y/N] " > /dev/tty
+            read -r reply < /dev/tty || return 1
+        else
+            return 1
+        fi
+        case "$reply" in
+            y|Y|yes|YES)
+                if ! prompt_for_sudo_access DIALOG_SUDO_READY \
+                    "Installing dialog temporarily requires administrator access." \
+                    "dnf install -y dialog"; then
+                    return 1
+                fi
+                if ! sudo dnf install -y dialog 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
+                    debug_log "Failed to install dialog"
+                    exit 1
+                fi
+                DIALOG_INSTALLED_BY_LSM=true
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    elif command -v brew >/dev/null 2>&1; then
+        echo "Package manager command:"
+        echo "  - brew install dialog"
+        if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+            printf "Install dialog with Homebrew? [y/N] " > /dev/tty
+            read -r reply < /dev/tty || return 1
+        else
+            return 1
+        fi
+        case "$reply" in
+            y|Y|yes|YES)
+                if ! brew install dialog 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
+                    debug_log "Failed to install dialog"
+                    exit 1
+                fi
+                DIALOG_INSTALLED_BY_LSM=true
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    else
+        echo "${YELLOW}No supported package manager found for automatic dialog install.${NC}"
+        return 1
+    fi
+
+    if ! command -v dialog >/dev/null 2>&1; then
+        echo "${RED}Error: Failed to install dialog${NC}"
+        exit 1
+    fi
+
+    return 0
 }
 
 #------------------------------------------------------------------------------
@@ -273,8 +624,8 @@ clone_repository() {
 # Add this function after the color definitions
 create_directories() {
     print_section_header "Creating Installation Directories"
-    sudo mkdir -p "$INSTALL_DIR"
-    sudo mkdir -p "$INSTALL_DIR/scripts"
+    run_install_command mkdir -p "$INSTALL_DIR"
+    run_install_command mkdir -p "$INSTALL_DIR/scripts"
 }
 
 # Declare the associative array globally
@@ -317,53 +668,11 @@ select_scripts() {
     # Check if dialog is installed
     debug_log "Checking for dialog installation"
     if ! command -v dialog >/dev/null 2>&1; then
-        debug_log "Dialog not found, attempting installation"
-        echo "${YELLOW}Dialog is not installed. Attempting to install...${NC}"
-        DIALOG_INSTALLED_BY_LSM=true
-
-        if command -v apt-get >/dev/null 2>&1; then
-            debug_log "Using apt-get to install dialog"
-            # Add error checking and output capture
-            if ! sudo apt-get update 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
-                debug_log "Failed to update apt"
-                exit 1
-            fi
-            debug_log "apt-get update completed"
-
-            if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y dialog 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
-                debug_log "Failed to install dialog"
-                exit 1
-            fi
-            debug_log "dialog installation completed"
-        elif command -v yum >/dev/null 2>&1; then
-            debug_log "Using yum to install dialog"
-            if ! sudo yum install -y dialog 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
-                debug_log "Failed to install dialog"
-                exit 1
-            fi
-        elif command -v dnf >/dev/null 2>&1; then
-            debug_log "Using dnf to install dialog"
-            if ! sudo dnf install -y dialog 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
-                debug_log "Failed to install dialog"
-                exit 1
-            fi
-        elif command -v brew >/dev/null 2>&1; then
-            debug_log "Using brew to install dialog"
-            if ! brew install dialog 2>&1 | tee -a "/tmp/lsm_install_debug.log"; then
-                debug_log "Failed to install dialog"
-                exit 1
-            fi
-        else
-            debug_log "ERROR: No supported package manager found"
-            echo "${RED}Error: Could not install dialog automatically${NC}"
-            exit 1
-        fi
-
-        # Verify dialog installation
-        if ! command -v dialog >/dev/null 2>&1; then
-            debug_log "ERROR: Dialog installation verification failed"
-            echo "${RED}Error: Failed to install dialog${NC}"
-            exit 1
+        debug_log "Dialog not found"
+        if ! install_dialog_package; then
+            debug_log "Continuing with text selection"
+            select_scripts_text "$scripts_dir"
+            return $?
         fi
         debug_log "Dialog installation verified successfully"
     fi
@@ -497,21 +806,14 @@ copy_files() {
     print_section_header "Copying Files"
     debug_log "Number of selected scripts: ${#SELECTED_SCRIPTS[@]}"
 
-    # Add verification of selected scripts
-    if [ ${#SELECTED_SCRIPTS[@]} -eq 0 ]; then
-        debug_log "ERROR: No scripts selected for installation"
-        echo "${RED}Error: No scripts selected for installation${NC}"
-        exit 1
-    fi
-    # List all selected scripts for verification
     for script_name in "${!SELECTED_SCRIPTS[@]}"; do
         debug_log "Script marked for installation: $script_name"
     done
 
     # Copy main script
     debug_log "Copying main script 'llama'"
-    sudo cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"
-    sudo chmod +x "$INSTALL_DIR/llama"
+    run_install_command cp "$TEMP_DIR/repo/llama" "$INSTALL_DIR/llama"
+    run_install_command chmod +x "$INSTALL_DIR/llama"
 
     # Copy selected scripts
     if [ -d "$TEMP_DIR/repo/scripts" ]; then
@@ -522,8 +824,8 @@ copy_files() {
                 if [ "${SELECTED_SCRIPTS[$script_name]:-0}" -eq 1 ]; then
                     echo "${GREEN}Installing: $script_name${NC}"
                     debug_log "Copying $script_name to $INSTALL_DIR/scripts/"
-                    sudo cp "$script" "$INSTALL_DIR/scripts/"
-                    sudo chmod +x "$INSTALL_DIR/scripts/$script_name"
+                    run_install_command cp "$script" "$INSTALL_DIR/scripts/"
+                    run_install_command chmod +x "$INSTALL_DIR/scripts/$script_name"
                 else
                     debug_log "Skipping: $script_name (not selected)"
                 fi
@@ -539,7 +841,8 @@ copy_files() {
 # Add this function after the color definitions
 create_symlink() {
     print_section_header "Creating Symlink"
-    sudo ln -sf "$INSTALL_DIR/llama" "$BIN_DIR/llama"
+    run_install_command mkdir -p "$BIN_DIR"
+    run_install_command ln -sf "$INSTALL_DIR/llama" "$BIN_DIR/llama"
 }
 
 # cleanup_dialog: Removes dialog package if it was auto-installed
@@ -548,12 +851,38 @@ create_symlink() {
 cleanup_dialog() {
     print_section_header "Cleaning Up Dialog"
     if [ "$DIALOG_INSTALLED_BY_LSM" = true ] && command -v dialog >/dev/null 2>&1; then
+        local reply
+        echo
+        echo "${YELLOW}LSM installed 'dialog' temporarily for the script selection UI.${NC}"
+        if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+            printf "Remove dialog now? [Y/n] " > /dev/tty
+            read -r reply < /dev/tty || reply=""
+        else
+            reply=""
+        fi
+        case "$reply" in
+            n|N|no|NO)
+                echo "${BLUE}Keeping dialog installed.${NC}"
+                return 0
+                ;;
+        esac
+
         if command -v apt-get >/dev/null 2>&1; then
+            prompt_for_sudo_access DIALOG_SUDO_READY \
+                "Removing the temporary dialog package requires administrator access." \
+                "apt-get remove -y dialog" \
+                "apt-get autoremove -y" || return 0
             sudo apt-get remove -y dialog
             sudo apt-get autoremove -y
         elif command -v yum >/dev/null 2>&1; then
+            prompt_for_sudo_access DIALOG_SUDO_READY \
+                "Removing the temporary dialog package requires administrator access." \
+                "yum remove -y dialog" || return 0
             sudo yum remove -y dialog
         elif command -v dnf >/dev/null 2>&1; then
+            prompt_for_sudo_access DIALOG_SUDO_READY \
+                "Removing the temporary dialog package requires administrator access." \
+                "dnf remove -y dialog" || return 0
             sudo dnf remove -y dialog
         elif command -v brew >/dev/null 2>&1; then
             brew uninstall dialog
@@ -583,18 +912,33 @@ main() {
     debug_log "Cloning repository"
     clone_repository
 
+    debug_log "Starting script selection"
+    if ! select_scripts; then
+        cleanup_dialog
+        set +e
+        trap - ERR
+        exit 1
+    fi
+    debug_log "Script selection completed"
+
+    if ! configure_install_target; then
+        echo "Installation cancelled before privileged changes."
+        cleanup_dialog
+        set +e
+        trap - ERR
+        exit 0
+    fi
+
     debug_log "Creating directories"
     create_directories
-
-    debug_log "Starting script selection"
-    select_scripts
-    debug_log "Script selection completed"
 
     debug_log "Copying files"
     copy_files
 
     debug_log "Creating symlink"
     create_symlink
+
+    persist_install_config
 
     debug_log "Cleaning up dialog"
     cleanup_dialog
@@ -607,6 +951,7 @@ main() {
     echo
     echo "${GREEN}Installation completed successfully!${NC}"
     echo "Run ${YELLOW}llama help${NC} to get started."
+    ensure_path_note
     
     # Disable error handling before exiting
     set +e
