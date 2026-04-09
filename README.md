@@ -114,6 +114,30 @@ Extracts URLs from an RSS/Atom feed and adds them to an ArchiveBox instance.
 llama pocketFeed <feed_url>
 ```
 
+### git
+
+Scans Git repositories under a folder and can mirror a clean local repo to an alternative remote such as GitLab, GitHub, or any custom Git URL.
+
+```bash
+llama git status ~/Dev
+llama git sync setup ~/Dev
+llama git sync setup ~/Dev/testm git@gitlab.com:me/testm.git
+llama git sync --all ~/Dev
+llama git sync ~/Dev/testm
+```
+
+Sync config is stored in `~/.config/llama_env/git-sync.conf` using this format:
+
+```text
+/absolute/path/to/repo: git@gitlab.com:me/repo.git
+```
+
+Rules:
+- `llama git sync --all` scans the current folder by default, like `status`
+- single-repo sync requires an explicit repo path
+- sync only runs for clean repositories
+- source data comes from the repo's primary remote (`origin` if present)
+
 ### test
 
 Development/testing utility with system info and directory listing.

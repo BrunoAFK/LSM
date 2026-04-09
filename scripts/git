@@ -3,8 +3,10 @@
 # Author: Bruno Pavelja - Bruno_AFK - Paveljame IT
 # Web: pavelja.me
 # Github: github.com/brunoafk
-# Version: 1.1
-# Description: Scan Git repositories under a directory and show clean/dirty status with branch divergence.
+# Version: 1.2
+# Description: Scan Git repositories under a directory, show clean/dirty status, and sync mirrored remotes.
+
+VERSION="1.2"
 
 clean=0
 dirty=0
@@ -16,20 +18,40 @@ c_yellow=$'\033[1;33m'
 c_blue=$'\033[1;34m'
 c_gray=$'\033[90m'
 
+SYNC_CONFIG_DIR="$HOME/.config/llama_env"
+SYNC_CONFIG_FILE="$SYNC_CONFIG_DIR/git-sync.conf"
+SYNC_REF_NAMESPACE="refs/llama-sync/source"
+
 show_help() {
-    echo "${c_blue}Git Status Scanner v1.1${c_reset}"
+    echo "${c_blue}Git Status Scanner v$VERSION${c_reset}"
     echo
     echo "${c_green}Usage:${c_reset}"
-    echo "  llama git <command> [location]"
+    echo "  llama git <command> [args]"
     echo
     echo "${c_yellow}Commands:${c_reset}"
-    printf "%-24s %s\n" "status [location]" "Scan all Git repos under location (default: current directory)"
-    printf "%-24s %s\n" "help, -h, --help" "Show this help message"
+    printf "%-28s %s\n" "status [location]" "Scan all Git repos under location (default: current directory)"
+    printf "%-28s %s\n" "sync setup [location]" "Scan repos and configure sync target URLs interactively"
+    printf "%-28s %s\n" "sync setup <repo> <url>" "Set or update sync target for one repo"
+    printf "%-28s %s\n" "sync --all [location]" "Sync all configured clean repos under location"
+    printf "%-28s %s\n" "sync <repo-path>" "Sync one configured repo by explicit path"
+    printf "%-28s %s\n" "help, -h, --help" "Show this help message"
     echo
     echo "${c_yellow}Examples:${c_reset}"
     echo "  llama git status"
     echo "  llama git status ~/Dev"
-    echo "  llama git help"
+    echo "  llama git sync setup ~/Dev"
+    echo "  llama git sync setup ~/Dev/testm git@gitlab.com:me/testm.git"
+    echo "  llama git sync --all ~/Dev"
+    echo "  llama git sync ~/Dev/testm"
+    echo
+    echo "${c_yellow}Sync Config:${c_reset}"
+    echo "  Stored in: $SYNC_CONFIG_FILE"
+    echo "  Format: /absolute/path/to/repo: https://example.com/group/repo.git"
+    echo
+    echo "${c_yellow}Sync Rules:${c_reset}"
+    echo "  - Sync runs only for clean repos."
+    echo "  - 'sync --all' scans the current folder by default, just like status."
+    echo "  - Single-repo sync requires an explicit repo path."
     echo
     echo "${c_yellow}Output Format:${c_reset}"
     echo "  ${c_green}CLEAN${c_reset}  No uncommitted changes"
@@ -39,6 +61,170 @@ show_help() {
     echo "  ${c_yellow}ahead${c_reset}   Commits ahead of remote"
     echo "  ${c_red}behind${c_reset}  Commits behind remote"
     echo "  ${c_gray}?${c_reset}       No remote tracking branch"
+}
+
+ensure_git_available() {
+    if ! command -v git >/dev/null 2>&1; then
+        echo "${c_red}Error:${c_reset} git is not installed."
+        exit 1
+    fi
+}
+
+ensure_directory_exists() {
+    local location="$1"
+    if [ ! -d "$location" ]; then
+        echo "${c_red}Error:${c_reset} Location not found: $location"
+        exit 1
+    fi
+}
+
+ensure_sync_config() {
+    mkdir -p "$SYNC_CONFIG_DIR"
+    touch "$SYNC_CONFIG_FILE"
+    chmod 600 "$SYNC_CONFIG_FILE" 2>/dev/null || true
+}
+
+parse_sync_config_line() {
+    local line="$1"
+    PARSED_SYNC_PATH=""
+    PARSED_SYNC_URL=""
+
+    case "$line" in
+        ""|\#*)
+            return 1
+            ;;
+    esac
+
+    case "$line" in
+        *": "*)
+            PARSED_SYNC_PATH="${line%%: *}"
+            PARSED_SYNC_URL="${line#*: }"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    [ -n "$PARSED_SYNC_PATH" ] && [ -n "$PARSED_SYNC_URL" ]
+}
+
+get_repo_root() {
+    local path="${1:-.}"
+    git -C "$path" rev-parse --show-toplevel 2>/dev/null
+}
+
+discover_repositories() {
+    local location="${1:-.}"
+
+    find "$location" \
+        \( -type d -name .git -prune -print -o -type f -name .git -print \) 2>/dev/null |
+    while IFS= read -r gitpath; do
+        git -C "$(dirname "$gitpath")" rev-parse --show-toplevel 2>/dev/null || true
+    done | awk 'NF && !seen[$0]++' | sort
+}
+
+lookup_sync_target() {
+    local repo="$1"
+    local line
+
+    [ -f "$SYNC_CONFIG_FILE" ] || return 1
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        if parse_sync_config_line "$line" && [ "$PARSED_SYNC_PATH" = "$repo" ]; then
+            printf '%s\n' "$PARSED_SYNC_URL"
+            return 0
+        fi
+    done < "$SYNC_CONFIG_FILE"
+
+    return 1
+}
+
+save_sync_target() {
+    local repo="$1"
+    local target_url="$2"
+    local temp_file line found=0
+
+    ensure_sync_config
+    temp_file=$(mktemp)
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        if parse_sync_config_line "$line" && [ "$PARSED_SYNC_PATH" = "$repo" ]; then
+            printf '%s: %s\n' "$repo" "$target_url" >> "$temp_file"
+            found=1
+        else
+            printf '%s\n' "$line" >> "$temp_file"
+        fi
+    done < "$SYNC_CONFIG_FILE"
+
+    if [ "$found" -eq 0 ]; then
+        printf '%s: %s\n' "$repo" "$target_url" >> "$temp_file"
+    fi
+
+    mv "$temp_file" "$SYNC_CONFIG_FILE"
+    chmod 600 "$SYNC_CONFIG_FILE" 2>/dev/null || true
+}
+
+remove_sync_target() {
+    local repo="$1"
+    local temp_file line
+
+    ensure_sync_config
+    temp_file=$(mktemp)
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        if parse_sync_config_line "$line" && [ "$PARSED_SYNC_PATH" = "$repo" ]; then
+            continue
+        fi
+        printf '%s\n' "$line" >> "$temp_file"
+    done < "$SYNC_CONFIG_FILE"
+
+    mv "$temp_file" "$SYNC_CONFIG_FILE"
+    chmod 600 "$SYNC_CONFIG_FILE" 2>/dev/null || true
+}
+
+get_source_remote() {
+    local repo="$1"
+    local remote_name
+
+    if git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+        echo "origin"
+        return 0
+    fi
+
+    remote_name=$(git -C "$repo" remote | head -n 1)
+    [ -n "$remote_name" ] || return 1
+    echo "$remote_name"
+}
+
+is_repo_clean() {
+    local repo="$1"
+    [ -z "$(git -C "$repo" status --porcelain 2>/dev/null)" ]
+}
+
+cleanup_sync_refs() {
+    local repo="$1"
+    local ref_name
+
+    while IFS= read -r ref_name; do
+        [ -n "$ref_name" ] && git -C "$repo" update-ref -d "$ref_name" >/dev/null 2>&1 || true
+    done < <(git -C "$repo" for-each-ref --format='%(refname)' "$SYNC_REF_NAMESPACE")
+}
+
+prepare_sync_branch_refs() {
+    local repo="$1"
+    local source_remote="$2"
+    local branch_name commit_sha branch_count=0
+
+    cleanup_sync_refs "$repo"
+
+    while IFS= read -r branch_name; do
+        [ -z "$branch_name" ] && continue
+        commit_sha=$(git -C "$repo" rev-parse "refs/remotes/$source_remote/$branch_name" 2>/dev/null) || return 1
+        git -C "$repo" update-ref "$SYNC_REF_NAMESPACE/$branch_name" "$commit_sha" || return 1
+        branch_count=$((branch_count + 1))
+    done < <(git -C "$repo" for-each-ref --format='%(refname:lstrip=3)' "refs/remotes/$source_remote" | sed '/^HEAD$/d')
+
+    printf '%s\n' "$branch_count"
 }
 
 print_repo_status() {
@@ -98,29 +284,21 @@ print_repo_status() {
 
 scan_repositories() {
     local location="${1:-.}"
-    local found=0
     local checked=0
 
-    if ! command -v git >/dev/null 2>&1; then
-        echo "${c_red}Error:${c_reset} git is not installed."
-        exit 1
-    fi
+    ensure_git_available
+    ensure_directory_exists "$location"
 
-    if [ ! -d "$location" ]; then
-        echo "${c_red}Error:${c_reset} Location not found: $location"
-        exit 1
-    fi
-
-    # Discover repos with a spinner
     local spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
     printf "${c_blue}Discovering repositories under ${c_yellow}%s${c_blue}...${c_reset} " "$location"
+
     local repos=()
-    while IFS= read -r -d '' gitpath; do
-        repos+=("$(dirname "$gitpath")")
+    while IFS= read -r repo; do
+        repos+=("$repo")
         local i=$(( ${#repos[@]} % ${#spin_chars} ))
         printf "\r${c_blue}Discovering repositories under ${c_yellow}%s${c_blue}...${c_reset} ${c_yellow}%s${c_reset} " "$location" "${spin_chars:$i:1}"
-    done < <(find "$location" \( -type d -name .git -o -type f -name .git \) -print0)
-    # Clear spinner line
+    done < <(discover_repositories "$location")
+
     printf "\r\033[K"
 
     if [ ${#repos[@]} -eq 0 ]; then
@@ -145,12 +323,235 @@ scan_repositories() {
         "$c_yellow" "$((clean + dirty))" "$c_reset"
 }
 
+sync_setup() {
+    local location repo target_url current_target source_remote source_url
+
+    ensure_git_available
+
+    if [ $# -ge 2 ]; then
+        repo=$(get_repo_root "$1") || {
+            echo "${c_red}Error:${c_reset} '$1' is not a Git repository."
+            return 1
+        }
+        target_url="$2"
+        save_sync_target "$repo" "$target_url"
+        echo "${c_green}Saved sync target:${c_reset} $repo -> $target_url"
+        return 0
+    fi
+
+    location="${1:-.}"
+    ensure_directory_exists "$location"
+    ensure_sync_config
+
+    local repos=()
+    while IFS= read -r repo; do
+        repos+=("$repo")
+    done < <(discover_repositories "$location")
+
+    if [ ${#repos[@]} -eq 0 ]; then
+        echo "${c_yellow}No Git repositories found under:${c_reset} $location"
+        return 0
+    fi
+
+    echo "${c_blue}Git sync setup${c_reset}"
+    echo "Config file: $SYNC_CONFIG_FILE"
+    echo "Press ENTER to keep current value or skip, use '-' to remove an existing sync target."
+
+    for repo in "${repos[@]}"; do
+        current_target=$(lookup_sync_target "$repo" 2>/dev/null || true)
+        source_remote=$(get_source_remote "$repo" 2>/dev/null || true)
+        source_url=""
+        [ -n "$source_remote" ] && source_url=$(git -C "$repo" remote get-url "$source_remote" 2>/dev/null || true)
+
+        echo
+        echo "${c_blue}Repo:${c_reset} $repo"
+        [ -n "$source_remote" ] && echo "${c_gray}Primary remote:${c_reset} $source_remote ${c_gray}($source_url)${c_reset}"
+        echo "${c_gray}Current sync target:${c_reset} ${current_target:-<none>}"
+        printf "Alternative remote URL: "
+
+        IFS= read -r target_url || return 1
+
+        case "$target_url" in
+            "")
+                if [ -n "$current_target" ]; then
+                    echo "${c_gray}Keeping existing sync target.${c_reset}"
+                else
+                    echo "${c_gray}Skipped.${c_reset}"
+                fi
+                ;;
+            "-")
+                if [ -n "$current_target" ]; then
+                    remove_sync_target "$repo"
+                    echo "${c_yellow}Removed sync target.${c_reset}"
+                else
+                    echo "${c_gray}Nothing to remove.${c_reset}"
+                fi
+                ;;
+            *)
+                save_sync_target "$repo" "$target_url"
+                echo "${c_green}Saved:${c_reset} $target_url"
+                ;;
+        esac
+    done
+}
+
+sync_one_repo() {
+    local requested_path="$1"
+    local repo target_url source_remote source_url branch_count
+
+    repo=$(get_repo_root "$requested_path") || {
+        echo "${c_red}Error:${c_reset} '$requested_path' is not a Git repository."
+        return 1
+    }
+
+    target_url=$(lookup_sync_target "$repo" 2>/dev/null || true)
+    if [ -z "$target_url" ]; then
+        echo "${c_red}Error:${c_reset} No sync target configured for $repo"
+        echo "Run: llama git sync setup \"$repo\" <remote-url>"
+        return 1
+    fi
+
+    if ! is_repo_clean "$repo"; then
+        echo "${c_yellow}Skipping dirty repo:${c_reset} $repo"
+        echo "  Sync target: $target_url"
+        return 11
+    fi
+
+    source_remote=$(get_source_remote "$repo" 2>/dev/null || true)
+    if [ -z "$source_remote" ]; then
+        echo "${c_red}Error:${c_reset} No source remote found for $repo"
+        return 1
+    fi
+
+    source_url=$(git -C "$repo" remote get-url "$source_remote" 2>/dev/null || true)
+    if [ -n "$source_url" ] && [ "$source_url" = "$target_url" ]; then
+        echo "${c_yellow}Skipping:${c_reset} sync target matches source remote for $repo"
+        return 12
+    fi
+
+    echo "${c_blue}Syncing:${c_reset} $repo"
+    echo "  Source: $source_remote ${c_gray}($source_url)${c_reset}"
+    echo "  Target: ${c_green}$target_url${c_reset}"
+
+    if ! git -C "$repo" fetch --prune "$source_remote" --tags; then
+        echo "${c_red}Error:${c_reset} Failed to fetch from $source_remote"
+        cleanup_sync_refs "$repo"
+        return 1
+    fi
+
+    branch_count=$(prepare_sync_branch_refs "$repo" "$source_remote") || {
+        echo "${c_red}Error:${c_reset} Failed to prepare branch refs for sync"
+        cleanup_sync_refs "$repo"
+        return 1
+    }
+
+    if [ "$branch_count" -eq 0 ]; then
+        echo "${c_yellow}Skipping:${c_reset} No remote branches found on $source_remote"
+        cleanup_sync_refs "$repo"
+        return 12
+    fi
+
+    if ! git -C "$repo" push --prune "$target_url" "+$SYNC_REF_NAMESPACE/*:refs/heads/*"; then
+        echo "${c_red}Error:${c_reset} Failed to push branches to sync target"
+        cleanup_sync_refs "$repo"
+        return 1
+    fi
+
+    if ! git -C "$repo" push --prune "$target_url" "+refs/tags/*:refs/tags/*"; then
+        echo "${c_red}Error:${c_reset} Failed to push tags to sync target"
+        cleanup_sync_refs "$repo"
+        return 1
+    fi
+
+    cleanup_sync_refs "$repo"
+    echo "${c_green}Sync completed.${c_reset} Branches mirrored: $branch_count"
+    return 0
+}
+
+sync_all_repositories() {
+    local location="${1:-.}"
+    local repo result
+    local total=0 configured=0 synced=0 dirty_skipped=0 failed=0
+
+    ensure_git_available
+    ensure_directory_exists "$location"
+
+    local repos=()
+    while IFS= read -r repo; do
+        repos+=("$repo")
+    done < <(discover_repositories "$location")
+
+    if [ ${#repos[@]} -eq 0 ]; then
+        echo "${c_yellow}No Git repositories found under:${c_reset} $location"
+        return 0
+    fi
+
+    echo "${c_blue}Sync scan:${c_reset} $location"
+
+    for repo in "${repos[@]}"; do
+        total=$((total + 1))
+        if ! lookup_sync_target "$repo" >/dev/null 2>&1; then
+            continue
+        fi
+
+        configured=$((configured + 1))
+        echo
+        sync_one_repo "$repo"
+        result=$?
+
+        case "$result" in
+            0)
+                synced=$((synced + 1))
+                ;;
+            11)
+                dirty_skipped=$((dirty_skipped + 1))
+                ;;
+            *)
+                failed=$((failed + 1))
+                ;;
+        esac
+    done
+
+    echo
+    printf "%sSYNC SUMMARY%s  scanned=%d  configured=%d  %ssynced=%d%s  %sdirty-skipped=%d%s  %sfailed=%d%s\n" \
+        "$c_blue" "$c_reset" \
+        "$total" "$configured" \
+        "$c_green" "$synced" "$c_reset" \
+        "$c_yellow" "$dirty_skipped" "$c_reset" \
+        "$c_red" "$failed" "$c_reset"
+}
+
+handle_sync_command() {
+    case "$1" in
+        "setup")
+            if [ -n "$2" ] && [ -n "$3" ]; then
+                sync_setup "$2" "$3"
+            else
+                sync_setup "$2"
+            fi
+            ;;
+        "--all")
+            sync_all_repositories "$2"
+            ;;
+        ""|"help"|"-h"|"--help")
+            show_help
+            ;;
+        *)
+            sync_one_repo "$1"
+            ;;
+    esac
+}
+
 case "$1" in
     "help"|"-h"|"--help")
         show_help
         ;;
     ""|"status")
         scan_repositories "$2"
+        ;;
+    "sync")
+        shift
+        handle_sync_command "$@"
         ;;
     *)
         echo "${c_red}Error:${c_reset} Unknown command '$1'."
