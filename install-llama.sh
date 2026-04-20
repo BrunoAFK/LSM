@@ -58,17 +58,23 @@ handle_error() {
 }
 
 cleanup_temp_files() {
+    # Prevent re-entrancy
+    if [ "${_CLEANING_UP:-}" = "1" ]; then
+        return
+    fi
+    _CLEANING_UP=1
+
     # Disable error handling during cleanup
     set +e
-    trap - ERR
-    
+    trap - ERR INT TERM
+
     echo "${YELLOW}Cleaning up temporary files...${NC}"
-    
+
     # Remove temporary directory and its contents
     if [ -d "$TEMP_DIR" ]; then
         rm -rf "$TEMP_DIR" || true
     fi
-    
+
     # Remove temporary files
     if [ -f "$TEMP_FILE" ]; then
         rm -f "$TEMP_FILE" || true
@@ -76,17 +82,15 @@ cleanup_temp_files() {
     if [ -f "$DESC_FILE" ]; then
         rm -f "$DESC_FILE" || true
     fi
-    
+
     # Remove debug log only if DEBUG is true
     if [ "$DEBUG" = true ] && [ -f "/tmp/dialog_debug.log" ]; then
         rm -f "/tmp/dialog_debug.log" || true
     fi
-    
-    # Re-enable error handling
-    set -e
 }
 
 trap 'cleanup_temp_files' EXIT
+trap 'cleanup_temp_files; exit 130' INT TERM
 trap 'handle_error $? $LINENO' ERR
 
 # Configuration
@@ -523,7 +527,8 @@ setup_temp_dir() {
     DESC_FILE=$(mktemp)
 
     # Consolidated cleanup trap for all temporary files and directories
-    trap 'cleanup_temp_files' EXIT INT TERM
+    trap 'cleanup_temp_files' EXIT
+    trap 'cleanup_temp_files; exit 130' INT TERM
 }
 
 # sha256_file: Cross-platform SHA256 hash
