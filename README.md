@@ -110,6 +110,31 @@ Trivy is pinned to a specific version (not `:latest`) due to a past supply chain
 
 Notifications (CRITICAL findings only) reuse the same `.env` config as docker-update.
 
+### codex-switch
+
+Manages separate Codex profiles for CLI and desktop-app workflows. Profiles are stored as local `CODEX_HOME` snapshots under `~/.config/llama_env/codex-switch/profiles`.
+
+```bash
+llama codex-switch save personal        # Save current Codex home as a profile
+llama codex-switch login work --device-auth
+llama codex-switch cli work             # Run Codex CLI with CODEX_HOME=work profile
+llama codex-switch app personal         # Switch active Codex app home to a profile
+llama codex-switch list
+llama codex-switch status
+```
+
+`cli` mode does not mutate `~/.codex`; it starts `codex` with `CODEX_HOME` pointed at the selected profile. `app` mode swaps the active Codex home directory and creates a backup first. Restart the Codex app after switching profiles.
+
+On Windows via WSL, `app` mode attempts to detect the Windows Codex home at `%USERPROFILE%\.codex` through `powershell.exe`/`wslpath`. Override it when needed:
+
+```bash
+llama codex-switch app work --home /mnt/c/Users/<you>/.codex
+```
+
+`auth.json` contains access tokens. Treat every saved profile and backup like a password.
+
+Set `LLAMA_CODEX_SWITCH_DIR` if you want profile storage somewhere other than `~/.config/llama_env/codex-switch`.
+
 ### pocketFeed
 
 Extracts URLs from an RSS/Atom feed and adds them to an ArchiveBox instance.
